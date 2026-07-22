@@ -5,7 +5,7 @@ import Foundation
 // status light. Twice a second it reads the session tokens (each file is
 // "<pid> <run|idle>") and drives one of three states:
 //
-//   any live session idle (waiting on you)  -> blink, 1.5s lit / 1.5s dark
+//   any live session idle (waiting on you)  -> blink, 2s lit / 2s dark
 //   any live session running                -> steady on
 //   no live sessions                        -> light off, exit
 //
@@ -114,7 +114,7 @@ while true {
         setLit(true)
         tick = 0
     case .blink:
-        setLit(tick % 6 < 3)
+        setLit(tick % 8 < 4)
         tick += 1
     }
     Thread.sleep(forTimeInterval: 0.5)

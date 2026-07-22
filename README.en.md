@@ -96,7 +96,7 @@ codex   # confirm the hook trust prompt in an interactive session
 A Swift daemon opens one frame-discarding `AVCaptureSession` on the built-in
 camera — the LED is lit exactly while the session captures. Twice a second
 the daemon reconciles per-session tokens (sweeping any whose host process
-died): someone waiting → blink 1.5s lit / 1.5s dark; nobody left → off, exit.
+died): someone waiting → blink 2s lit / 2s dark; nobody left → off, exit.
 Multiple sessions, crashes, power loss — the LED always reflects reality.
 Built-in camera only, so macOS never draws the external-camera green icon
 in your menu bar.
