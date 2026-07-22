@@ -84,7 +84,7 @@ cd thinklight
 ```
 
 回合结束（`Stop`）、API 出错（`StopFailure`）或等待权限确认（`Notification`）时，
-ThinkLight 会切换为闪烁；你提交下一条消息后恢复常亮。
+ThinkLight 会切换为闪烁；你提交下一条消息或批准权限后恢复常亮。
 
 ### Codex CLI
 

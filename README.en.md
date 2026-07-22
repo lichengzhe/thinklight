@@ -92,7 +92,8 @@ If you prefer not to use the plugin, merge these hooks into
 
 ThinkLight starts blinking when a turn ends (`Stop`), the API fails
 (`StopFailure`), or a permission prompt needs confirmation (`Notification`). It
-returns to a steady light when you submit the next message.
+returns to a steady light when you submit the next message or approve the
+permission prompt.
 
 ### Codex CLI
 
