@@ -114,9 +114,11 @@ this project is built on.
 
 **Power?** Lowest session preset, no encoding, no I/O. Negligible.
 
-**Multiple agent sessions?** They share one LED and one pidfile; whichever
-session stops last turns the light off. Precise per-session refcounting is a
-possible future improvement.
+**Multiple agent sessions?** They share one LED, and the first session to
+stop turns it off — even if another session is still working (it lights up
+again on that session's next prompt). Deliberate bias: a dark LED can be
+stale, a lit LED never lies. Precise per-session refcounting is a possible
+future improvement.
 
 **~2s latency from prompt to light** is the camera powering up. Normal.
 
