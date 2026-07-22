@@ -65,12 +65,14 @@ case "${1:-status}" in
   pulse)
     # Blink slowly n times, then leave the light on — unless every session
     # stopped mid-pulse, in which case stay dark rather than resurrect the LED.
+    # Measured LED-on latency after daemon start is ~0.4s; these keep the
+    # blink brisk (~1.3s per cycle) while the lit phase stays clearly visible.
     for _ in $(seq 1 "${2:-3}"); do
       pkill -fx "$DAEMON" 2>/dev/null
-      sleep 0.7
+      sleep 0.4
       [[ -n "$(ls -A "$SESSIONS")" ]] || exit 0
       start_daemon
-      sleep 1.6
+      sleep 0.9
     done
     ;;
   blink)
