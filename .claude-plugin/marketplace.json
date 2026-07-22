@@ -1,0 +1,11 @@
+{
+  "name": "thinklight",
+  "owner": { "name": "leecz" },
+  "plugins": [
+    {
+      "name": "thinklight",
+      "source": "./plugin",
+      "description": "Turn the Mac camera LED into an unfakeable AI-agent status light: on while the agent works, off when it's your turn"
+    }
+  ]
+}

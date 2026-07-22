@@ -1,0 +1,5 @@
+{
+  "name": "thinklight",
+  "version": "1.0.0",
+  "description": "Turn the Mac camera LED into an unfakeable AI-agent status light. Requires ~/.local/bin/thinklight (run install.sh from the repo first)."
+}
