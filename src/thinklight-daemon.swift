@@ -1,40 +1,32 @@
 import AVFoundation
 import Foundation
 
-// Hold both the Mac's built-in camera and an attached Studio Display camera.
-// Other external cameras and Continuity Camera iPhones are deliberately skipped.
+// ThinkLight daemon: hold the Mac's built-in camera so its LED becomes a
+// status light. Once a second it reads the session tokens (each file is
+// "<pid> <run|idle>") and drives one of three states:
+//
+//   any live session idle (waiting on you)  -> blink, 3s lit / 3s dark
+//   any live session running                -> steady on
+//   no live sessions                        -> light off, exit
+//
+// Tokens whose recorded process has exited are deleted here, so a crashed
+// session can never leave the LED stuck on.
+let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".local/state/thinklight/sessions")
+
 let discovery = AVCaptureDevice.DiscoverySession(
-    deviceTypes: [.builtInWideAngleCamera, .external],
+    deviceTypes: [.builtInWideAngleCamera],
     mediaType: .video,
     position: .unspecified
 )
-let discoveredDevices = discovery.devices.filter { !$0.isContinuityCamera }
-func isStudioDisplayCamera(_ device: AVCaptureDevice) -> Bool {
-    device.manufacturer == "Apple Inc." && device.localizedName.contains("Studio Display")
-}
-let builtInDevices = discoveredDevices.filter {
-    $0.deviceType == .builtInWideAngleCamera && !isStudioDisplayCamera($0)
-}
-let studioDisplayDevices = discoveredDevices.filter(isStudioDisplayCamera)
-
-let target = CommandLine.arguments.dropFirst().first ?? "built-in"
-if target == "has-studio" {
-    exit(studioDisplayDevices.isEmpty ? 1 : 0)
-}
-
-let devices: [AVCaptureDevice]
-switch target {
-case "built-in":
-    devices = builtInDevices
-case "studio":
-    devices = studioDisplayDevices
-default:
-    fputs("usage: thinklight-daemon [built-in|studio|has-studio]\n", stderr)
-    exit(64)
-}
-
-guard !devices.isEmpty else {
-    fputs("thinklight: no camera found for target '\(target)'\n", stderr)
+// A Studio Display's camera also reports .builtInWideAngleCamera and can
+// enumerate ahead of the Mac's own; only the true built-in LED is wanted
+// (external cameras make macOS draw a green camera icon in the menu bar).
+guard let device = discovery.devices.first(where: {
+    !$0.isContinuityCamera
+        && !($0.manufacturer == "Apple Inc." && $0.localizedName.contains("Studio Display"))
+}) else {
+    fputs("thinklight: no built-in camera found\n", stderr)
     exit(1)
 }
 
@@ -56,54 +48,74 @@ final class FrameSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 }
 
-final class CameraHold {
-    let device: AVCaptureDevice
-    let session: AVCaptureSession
-    let sink: FrameSink
-
-    init?(device: AVCaptureDevice) {
-        let session = AVCaptureSession()
-        session.sessionPreset = .low
-        guard let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
-            fputs("thinklight: cannot open \(device.localizedName)\n", stderr)
-            return nil
-        }
-        session.addInput(input)
-
-        // A session with no output never captures, so its LED stays dark.
-        let sink = FrameSink()
-        let output = AVCaptureVideoDataOutput()
-        output.alwaysDiscardsLateVideoFrames = true
-        output.setSampleBufferDelegate(
-            sink,
-            queue: DispatchQueue(label: "thinklight.sink.\(device.uniqueID)")
-        )
-        guard session.canAddOutput(output) else {
-            fputs("thinklight: cannot add video output for \(device.localizedName)\n", stderr)
-            return nil
-        }
-        session.addOutput(output)
-        session.startRunning()
-        guard session.isRunning else {
-            fputs("thinklight: failed to start \(device.localizedName)\n", stderr)
-            return nil
-        }
-
-        self.device = device
-        self.session = session
-        self.sink = sink
-    }
+let session = AVCaptureSession()
+session.sessionPreset = .low
+guard let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
+    fputs("thinklight: cannot open \(device.localizedName)\n", stderr)
+    exit(3)
 }
+session.addInput(input)
 
-let holds = devices.compactMap { CameraHold(device: $0) }
-guard !holds.isEmpty else { exit(3) }
-
-let names = holds.map { $0.device.localizedName }.joined(separator: " + ")
-FileHandle.standardOutput.write(
-    "thinklight: LEDs on via \(names), pid \(ProcessInfo.processInfo.processIdentifier)\n"
-        .data(using: .utf8)!
-)
+// A session with no output never actually starts capturing, so the LED stays dark
+let sink = FrameSink()
+let output = AVCaptureVideoDataOutput()
+output.alwaysDiscardsLateVideoFrames = true
+output.setSampleBufferDelegate(sink, queue: DispatchQueue(label: "thinklight.sink"))
+guard session.canAddOutput(output) else {
+    fputs("thinklight: cannot add video output\n", stderr)
+    exit(4)
+}
+session.addOutput(output)
 
 signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }
-RunLoop.main.run()
+
+enum Want { case steady, blink, quit }
+
+func poll() -> Want {
+    var anyRun = false, anyIdle = false
+    let fm = FileManager.default
+    for name in (try? fm.contentsOfDirectory(atPath: sessionsDir.path)) ?? [] {
+        if name.hasPrefix(".") { continue }  // half-written temp files
+        let file = sessionsDir.appendingPathComponent(name)
+        let parts = ((try? String(contentsOf: file, encoding: .utf8)) ?? "")
+            .split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+        guard let pid = Int32(parts.first ?? ""), kill(pid, 0) == 0 else {
+            try? fm.removeItem(at: file)
+            continue
+        }
+        // Tokens from older versions carry a backend name here; count them as running
+        if parts.count > 1 && parts[1] == "idle" { anyIdle = true } else { anyRun = true }
+    }
+    if anyIdle { return .blink }
+    if anyRun { return .steady }
+    return .quit
+}
+
+var lit = false
+func setLit(_ on: Bool) {
+    guard on != lit else { return }
+    if on { session.startRunning() } else { session.stopRunning() }
+    lit = on
+}
+
+FileHandle.standardOutput.write(
+    "thinklight: watching sessions, LED via \(device.localizedName), pid \(ProcessInfo.processInfo.processIdentifier)\n"
+        .data(using: .utf8)!
+)
+
+var tick = 0
+while true {
+    switch poll() {
+    case .quit:
+        setLit(false)
+        exit(0)
+    case .steady:
+        setLit(true)
+        tick = 0
+    case .blink:
+        setLit((tick / 3) % 2 == 0)
+        tick += 1
+    }
+    Thread.sleep(forTimeInterval: 1)
+}

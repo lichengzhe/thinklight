@@ -1,5 +1,5 @@
 {
-  "description": "Camera LED status lights: on while the agent works, off when the turn ends, the session exits, the API fails, or the agent is waiting for your permission",
+  "description": "Camera LED status light: steady while the agent works, blinking when a session waits for you (turn ended, API failed, or permission prompt), off when every session exits",
   "hooks": {
     "UserPromptSubmit": [
       {

@@ -1,11 +1,13 @@
 {
   "name": "thinklight",
-  "owner": { "name": "lichengzhe" },
+  "owner": {
+    "name": "lichengzhe"
+  },
   "plugins": [
     {
       "name": "thinklight",
       "source": "./plugin",
-      "description": "Turn the Mac and Studio Display camera LEDs into AI-agent status lights: on while the agent works, off when it's your turn"
+      "description": "Turn the Mac camera LED into an AI-agent status light: steady = working, blinking = waiting for you, off = all done"
     }
   ]
 }

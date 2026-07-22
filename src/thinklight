@@ -1,72 +1,32 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|check
-# Use the Mac camera LEDs as silent, glanceable "AI agent is working" indicators.
-#
-# Multi-session refcounting, self-healing by design: each session's `on` drops
-# a token containing its owner PID and assigned camera backend. With a Studio
-# Display attached, new sessions take the less-used light (built-in wins ties);
-# without one, every session shares the built-in light. `off` only extinguishes
-# a backend when its last assigned session leaves.
-# Tokens are hints, never trusted state — on/off sweep any token whose
-# recorded process has exited, so a crashed session cannot leave the LED stuck
-# on. The daemon process itself (matched with pgrep -fx on its full path —
-# exact, so an editor or pager open on that path is never mistaken for it)
-# remains the single source of truth for the LED.
+# thinklight on|off [--force]|status|blink [seconds]|check|update [--check]
+# One light, three states: steady = an agent is working, blinking = a session
+# is waiting on you, off = nothing open. The daemon owns the LED and the state
+# machine; this CLI only records per-session tokens and keeps the daemon alive.
 DAEMON="$HOME/.local/bin/thinklight-daemon"
 # pgrep/pkill -f patterns are regexes; escape the path so `.` and friends
 # match literally wherever this ends up installed.
 DAEMON_RE=$(printf '%s' "$DAEMON" | sed 's/[][*^$+?(){}|\\.]/\\&/g')
 STATE="$HOME/.local/state/thinklight"
 SESSIONS="$STATE/sessions"
-STATE_LOCK="$STATE/state.lock"
+SPAWN_LOCK="$STATE/spawn.lock"
 SOURCE_FILE="$STATE/source"
 REVISION_FILE="$STATE/revision"
 UPDATE_CHECK_FILE="$STATE/update-check"
 REPO_URL="https://github.com/lichengzhe/thinklight.git"
 mkdir -p "$SESSIONS"
 
-STATE_LOCK_HELD=0
-
-cleanup() {
-  if [[ "$STATE_LOCK_HELD" == 1 && "$(cat "$STATE_LOCK" 2>/dev/null)" == "$$" ]]; then
-    rm -f "$STATE_LOCK"
-  fi
+# Hooks pipe a JSON payload on stdin: session_id names the token so a
+# session's on/off pair up even across apps with different environments, and
+# hook_event_name tells `off` whether the turn merely ended (keep the token,
+# mark it waiting) or the session is gone (drop it).
+PAYLOAD=""
+[[ -t 0 ]] || PAYLOAD=$(cat)
+json_field() {
+  printf '%s' "$PAYLOAD" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
 }
-trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-acquire_state_lock() {
-  local tries=0
-  # 200 tries (~4s+) comfortably exceeds reconcile_daemons' worst-case
-  # critical section (~3-4s of daemon start/stop waits under contention).
-  while ! /usr/bin/shlock -f "$STATE_LOCK" -p $$; do
-    tries=$((tries + 1))
-    [[ "$tries" -lt 200 ]] || return 1
-    sleep 0.02
-  done
-  STATE_LOCK_HELD=1
-}
-
-release_state_lock() {
-  if [[ "$STATE_LOCK_HELD" == 1 && "$(cat "$STATE_LOCK" 2>/dev/null)" == "$$" ]]; then
-    rm -f "$STATE_LOCK"
-  fi
-  STATE_LOCK_HELD=0
-}
-
-lock_or_die() {
-  acquire_state_lock && return 0
-  echo "thinklight: timed out waiting for state lock" >&2
-  exit 75
-}
-
-# Hooks pipe a JSON payload on stdin; its session_id names the token so this
-# session's on and off pair up even across apps with different environments.
-# Manual runs (or payloads without one) fall back to the owning process's PID.
-KEY=""
-[[ -t 0 ]] || KEY=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+KEY=$(json_field session_id)
+EVENT=$(json_field hook_event_name)
 
 # A bare hook command is normally exec'd directly, making PPID the long-lived
 # Claude/Codex process. If a shell or launcher remains in between, walk upward
@@ -90,119 +50,40 @@ owner_pid() {
 OWNER_PID=$(owner_pid)
 [[ "$KEY" =~ ^[A-Za-z0-9._-]+$ && "$KEY" != "." && "$KEY" != ".." ]] || KEY="ppid-$OWNER_PID"
 
-sweep() {
-  local f pid backend
-  for f in "$SESSIONS"/*; do
-    [[ -e "$f" ]] || continue
-    read -r pid backend < "$f"
-    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || rm -f "$f"
-  done
-}
-
-token_backend() {
-  local pid backend
-  read -r pid backend < "$1"
-  echo "${backend:-built-in}"
-}
-
-backend_session_count() {
-  local wanted=$1 f backend count=0
-  for f in "$SESSIONS"/*; do
-    [[ -e "$f" ]] || continue
-    backend=$(token_backend "$f")
-    [[ "$backend" == "$wanted" ]] && count=$((count + 1))
-  done
-  echo "$count"
-}
-
-has_backend_sessions() {
-  [[ "$(backend_session_count "$1")" -gt 0 ]]
-}
-
-# Probing for a Studio Display spawns the daemon binary (an AVFoundation
-# device enumeration); cache the answer so one invocation pays at most once.
-HAS_STUDIO=""
-has_studio() {
-  if [[ -z "$HAS_STUDIO" ]]; then
-    if "$DAEMON" has-studio >/dev/null 2>&1; then HAS_STUDIO=yes; else HAS_STUDIO=no; fi
-  fi
-  [[ "$HAS_STUDIO" == yes ]]
-}
-
-choose_backend() {
-  local built_in_count studio_count
-  if ! has_studio; then
-    echo built-in
-    return 0
-  fi
-  built_in_count=$(backend_session_count built-in)
-  studio_count=$(backend_session_count studio)
-  if [[ "$built_in_count" -le "$studio_count" ]]; then
-    echo built-in
-  else
-    echo studio
-  fi
+# Written via mktemp+mv so the daemon never reads a half-written token.
+write_token() {
+  local tmp
+  tmp=$(mktemp "$SESSIONS/.tok.XXXXXX") || return 1
+  printf '%s %s\n' "$OWNER_PID" "$1" > "$tmp"
+  mv -f "$tmp" "$SESSIONS/$KEY"
 }
 
 daemon_running() {
-  pgrep -qfx "$DAEMON_RE" \
-    || pgrep -qfx "$DAEMON_RE both" \
-    || pgrep -qfx "$DAEMON_RE built-in" \
-    || pgrep -qfx "$DAEMON_RE studio"
+  pgrep -qfx "$DAEMON_RE"
 }
 
-start_backend() {
-  local backend=$1 pid tries=0
-  pgrep -qfx "$DAEMON_RE $backend" && return 0
-  nohup "$DAEMON" "$backend" >/dev/null 2>&1 &
-  pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    pgrep -qfx "$DAEMON_RE $backend" && return 0
-    tries=$((tries + 1))
-    [[ "$tries" -lt 20 ]] || break
-    sleep 0.05
-  done
-  return 1
-}
-
-stop_backend() {
-  local backend=$1 tries=0
-  pkill -fx "$DAEMON_RE $backend" 2>/dev/null || return 0
-  while pgrep -qfx "$DAEMON_RE $backend"; do
-    tries=$((tries + 1))
-    [[ "$tries" -lt 20 ]] || break
-    sleep 0.05
-  done
-}
-
-stop_legacy_daemons() {
+ensure_daemon() {
+  daemon_running && return 0
+  # shlock reaps locks whose recorded pid is dead, so a killed CLI cannot wedge this.
   local tries=0
-  pkill -fx "$DAEMON_RE" 2>/dev/null || true
-  pkill -fx "$DAEMON_RE both" 2>/dev/null || true
-  while pgrep -qfx "$DAEMON_RE" || pgrep -qfx "$DAEMON_RE both"; do
+  while ! /usr/bin/shlock -f "$SPAWN_LOCK" -p $$; do
     tries=$((tries + 1))
-    [[ "$tries" -lt 20 ]] || break
-    sleep 0.05
+    [[ "$tries" -lt 100 ]] || return 1
+    sleep 0.02
   done
+  if ! daemon_running; then
+    nohup "$DAEMON" >/dev/null 2>&1 &
+  fi
+  rm -f "$SPAWN_LOCK"
 }
 
-reconcile_daemons() {
-  local backend f pid assigned
-  stop_legacy_daemons
-  if ! has_studio; then
-    for f in "$SESSIONS"/*; do
-      [[ -e "$f" ]] || continue
-      read -r pid assigned < "$f"
-      [[ "${assigned:-built-in}" == studio ]] && echo "$pid built-in" > "$f"
-    done
-  fi
-  for backend in built-in studio; do
-    if has_backend_sessions "$backend"; then
-      start_backend "$backend"
-    else
-      stop_backend "$backend"
-    fi
-  done
+stop_daemons() {
+  pkill -fx "$DAEMON_RE" 2>/dev/null
+  # Daemon invocations from older multi-light versions took a backend argument
+  pkill -fx "$DAEMON_RE built-in" 2>/dev/null
+  pkill -fx "$DAEMON_RE studio" 2>/dev/null
+  pkill -fx "$DAEMON_RE both" 2>/dev/null
+  return 0
 }
 
 remote_revision() {
@@ -251,41 +132,35 @@ perform_update() {
 
 case "${1:-status}" in
   on)
-    lock_or_die
-    sweep
-    # Heartbeat fast path: `on` also fires per tool call (PostToolUse), so when
-    # this session already holds a token and its LED daemon is running there is
-    # nothing to do — skip the backend probe and reconcile entirely.
-    if [[ -f "$SESSIONS/$KEY" ]] && pgrep -qfx "$DAEMON_RE $(token_backend "$SESSIONS/$KEY")"; then
-      release_state_lock
-      exit 0
-    fi
-    rm -f "$SESSIONS/$KEY"
-    backend=$(choose_backend)
-    echo "$OWNER_PID $backend" > "$SESSIONS/$KEY"
-    reconcile_daemons
+    write_token run
+    ensure_daemon
     schedule_update_check
-    release_state_lock
     ;;
   off)
-    # A human typing `off` at a terminal means "light off, now" — honor it even
-    # if agent sessions are still registered. Hooks (stdin is a pipe) refcount.
-    lock_or_die
     if [[ "${2:-}" == "--force" || -t 0 ]]; then
+      # A human typing `off` at a terminal means "light off, now"
       rm -f "$SESSIONS"/*
+      stop_daemons
+    elif [[ "$EVENT" == Stop || "$EVENT" == StopFailure || "$EVENT" == Notification ]]; then
+      # Turn over but session still open: blink until its human comes back.
+      # Hosts that omit hook_event_name simply degrade to plain on/off.
+      write_token idle
+      ensure_daemon
     else
       rm -f "$SESSIONS/$KEY"
-      sweep
     fi
-    reconcile_daemons
-    release_state_lock
-    exit 0
+    ;;
+  status)
+    if ! daemon_running; then
+      echo off
+    elif grep -q ' idle$' "$SESSIONS"/* 2>/dev/null; then
+      echo blink
+    else
+      echo on
+    fi
     ;;
   blink)
     "$0" on </dev/null; sleep "${2:-2}"; "$0" off </dev/null
-    ;;
-  status)
-    if daemon_running; then echo on; else echo off; fi
     ;;
   check)
     exec "$HOME/.local/bin/thinklight-check"
@@ -301,11 +176,9 @@ case "${1:-status}" in
     fi
     ;;
   _sync)
-    # Internal upgrade hook: rebuild daemon state from existing session tokens.
-    lock_or_die
-    sweep
-    reconcile_daemons
-    release_state_lock
+    # Internal upgrade hook: replace any older daemon, then let session tokens decide.
+    stop_daemons
+    if ls "$SESSIONS"/* >/dev/null 2>&1; then ensure_daemon; fi
     ;;
   *)
     echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|update [--check]" >&2
