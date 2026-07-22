@@ -1,5 +1,5 @@
 {
-  "description": "Camera LED status lights: on when a prompt is submitted, off when the turn ends or the session exits",
+  "description": "Camera LED status lights: on while the agent works, off when the turn ends, the session exits, the API fails, or the agent is waiting for your permission",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -7,7 +7,33 @@
           {
             "type": "command",
             "command": "$HOME/.local/bin/thinklight on",
-            "timeout": 10
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/thinklight on",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/thinklight off",
+            "timeout": 10,
+            "async": true
           }
         ]
       }
@@ -18,7 +44,20 @@
           {
             "type": "command",
             "command": "$HOME/.local/bin/thinklight off",
-            "timeout": 10
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/thinklight off",
+            "timeout": 10,
+            "async": true
           }
         ]
       }

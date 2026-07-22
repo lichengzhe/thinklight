@@ -1,5 +1,5 @@
 {
   "name": "thinklight",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Turn the Mac and Studio Display camera LEDs into AI-agent status lights. Requires ~/.local/bin/thinklight (run install.sh from the repo first)."
 }

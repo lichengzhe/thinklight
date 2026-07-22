@@ -13,6 +13,9 @@
 # exact, so an editor or pager open on that path is never mistaken for it)
 # remains the single source of truth for the LED.
 DAEMON="$HOME/.local/bin/thinklight-daemon"
+# pgrep/pkill -f patterns are regexes; escape the path so `.` and friends
+# match literally wherever this ends up installed.
+DAEMON_RE=$(printf '%s' "$DAEMON" | sed 's/[][*^$+?(){}|\\.]/\\&/g')
 STATE="$HOME/.local/state/thinklight"
 SESSIONS="$STATE/sessions"
 STATE_LOCK="$STATE/state.lock"
@@ -36,9 +39,11 @@ trap 'exit 143' TERM
 
 acquire_state_lock() {
   local tries=0
+  # 200 tries (~4s+) comfortably exceeds reconcile_daemons' worst-case
+  # critical section (~3-4s of daemon start/stop waits under contention).
   while ! /usr/bin/shlock -f "$STATE_LOCK" -p $$; do
     tries=$((tries + 1))
-    [[ "$tries" -lt 100 ]] || return 1
+    [[ "$tries" -lt 200 ]] || return 1
     sleep 0.02
   done
   STATE_LOCK_HELD=1
@@ -114,9 +119,19 @@ has_backend_sessions() {
   [[ "$(backend_session_count "$1")" -gt 0 ]]
 }
 
+# Probing for a Studio Display spawns the daemon binary (an AVFoundation
+# device enumeration); cache the answer so one invocation pays at most once.
+HAS_STUDIO=""
+has_studio() {
+  if [[ -z "$HAS_STUDIO" ]]; then
+    if "$DAEMON" has-studio >/dev/null 2>&1; then HAS_STUDIO=yes; else HAS_STUDIO=no; fi
+  fi
+  [[ "$HAS_STUDIO" == yes ]]
+}
+
 choose_backend() {
   local built_in_count studio_count
-  if ! "$DAEMON" has-studio >/dev/null 2>&1; then
+  if ! has_studio; then
     echo built-in
     return 0
   fi
@@ -130,19 +145,19 @@ choose_backend() {
 }
 
 daemon_running() {
-  pgrep -qfx "$DAEMON" \
-    || pgrep -qfx "$DAEMON both" \
-    || pgrep -qfx "$DAEMON built-in" \
-    || pgrep -qfx "$DAEMON studio"
+  pgrep -qfx "$DAEMON_RE" \
+    || pgrep -qfx "$DAEMON_RE both" \
+    || pgrep -qfx "$DAEMON_RE built-in" \
+    || pgrep -qfx "$DAEMON_RE studio"
 }
 
 start_backend() {
   local backend=$1 pid tries=0
-  pgrep -qfx "$DAEMON $backend" && return 0
+  pgrep -qfx "$DAEMON_RE $backend" && return 0
   nohup "$DAEMON" "$backend" >/dev/null 2>&1 &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
-    pgrep -qfx "$DAEMON $backend" && return 0
+    pgrep -qfx "$DAEMON_RE $backend" && return 0
     tries=$((tries + 1))
     [[ "$tries" -lt 20 ]] || break
     sleep 0.05
@@ -152,8 +167,8 @@ start_backend() {
 
 stop_backend() {
   local backend=$1 tries=0
-  pkill -fx "$DAEMON $backend" 2>/dev/null || return 0
-  while pgrep -qfx "$DAEMON $backend"; do
+  pkill -fx "$DAEMON_RE $backend" 2>/dev/null || return 0
+  while pgrep -qfx "$DAEMON_RE $backend"; do
     tries=$((tries + 1))
     [[ "$tries" -lt 20 ]] || break
     sleep 0.05
@@ -162,9 +177,9 @@ stop_backend() {
 
 stop_legacy_daemons() {
   local tries=0
-  pkill -fx "$DAEMON" 2>/dev/null || true
-  pkill -fx "$DAEMON both" 2>/dev/null || true
-  while pgrep -qfx "$DAEMON" || pgrep -qfx "$DAEMON both"; do
+  pkill -fx "$DAEMON_RE" 2>/dev/null || true
+  pkill -fx "$DAEMON_RE both" 2>/dev/null || true
+  while pgrep -qfx "$DAEMON_RE" || pgrep -qfx "$DAEMON_RE both"; do
     tries=$((tries + 1))
     [[ "$tries" -lt 20 ]] || break
     sleep 0.05
@@ -174,7 +189,7 @@ stop_legacy_daemons() {
 reconcile_daemons() {
   local backend f pid assigned
   stop_legacy_daemons
-  if ! "$DAEMON" has-studio >/dev/null 2>&1; then
+  if ! has_studio; then
     for f in "$SESSIONS"/*; do
       [[ -e "$f" ]] || continue
       read -r pid assigned < "$f"
@@ -236,12 +251,18 @@ perform_update() {
 
 case "${1:-status}" in
   on)
-    local_backend=""
     lock_or_die
     sweep
+    # Heartbeat fast path: `on` also fires per tool call (PostToolUse), so when
+    # this session already holds a token and its LED daemon is running there is
+    # nothing to do — skip the backend probe and reconcile entirely.
+    if [[ -f "$SESSIONS/$KEY" ]] && pgrep -qfx "$DAEMON_RE $(token_backend "$SESSIONS/$KEY")"; then
+      release_state_lock
+      exit 0
+    fi
     rm -f "$SESSIONS/$KEY"
-    local_backend=$(choose_backend)
-    echo "$OWNER_PID $local_backend" > "$SESSIONS/$KEY"
+    backend=$(choose_backend)
+    echo "$OWNER_PID $backend" > "$SESSIONS/$KEY"
     reconcile_daemons
     schedule_update_check
     release_state_lock

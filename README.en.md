@@ -67,7 +67,16 @@ Add to `~/.claude/settings.json` (merge with existing settings):
   "UserPromptSubmit": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight on", "timeout": 10, "async": true }] }
   ],
+  "PostToolUse": [
+    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight on", "timeout": 10, "async": true }] }
+  ],
+  "Notification": [
+    { "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10, "async": true }] }
+  ],
   "Stop": [
+    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10, "async": true }] }
+  ],
+  "StopFailure": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10, "async": true }] }
   ],
   "SessionEnd": [
@@ -75,6 +84,12 @@ Add to `~/.claude/settings.json` (merge with existing settings):
   ]
 }
 ```
+
+This makes the light's meaning strict: **on = the agent is working, ignore it;
+off = it needs you** — the run finished (`Stop`), the API failed
+(`StopFailure`), or it is sitting at a permission prompt waiting for your
+approval (`Notification`). After you approve, the light comes back on as soon
+as the next tool call completes (`PostToolUse`).
 
 Or install as a plugin — this repo is also a plugin marketplace:
 
@@ -121,9 +136,15 @@ this project is built on.
 
 **Power?** Lowest session preset, no encoding, no I/O. Negligible.
 
-**Multiple agents / sessions?** Fully supported. Each session registers a token
-under `~/.local/state/thinklight` when a prompt starts and removes it when the
-turn ends. With a Studio Display, the first active session takes the built-in
+**Light still on after pressing Esc?** Claude Code currently fires no hook
+event on a user interrupt, so the light stays on until that session's next
+turn ends or the session exits. A manual `thinklight off` clears it
+immediately.
+
+**Multiple agents / sessions?** Fully supported. Each session registers or
+refreshes a token under `~/.local/state/thinklight` when a prompt is submitted
+and each time a tool call completes, and deregisters when the turn ends, the
+API fails, or it is waiting for permission approval. With a Studio Display, the first active session takes the built-in
 LED, the second takes the Studio Display LED, and further sessions go to the
 side with fewer active sessions (built-in wins ties). Each LED is independently
 reference-counted and goes dark when its last assigned session finishes.
@@ -147,8 +168,9 @@ include:
   third-party UVC webcams, with backend selection per setup
 - **Display-based indicators** — brightness pulse or a screen-edge glow for
   setups with no controllable LED at all
-- **Multi-state signaling** — blink patterns for "waiting for approval"
-  (`Notification` hook) vs steady-on for "working"
+- **Multi-state signaling** — "waiting for approval turns the light off" is
+  built in (`Notification` hook); blink patterns for richer states could
+  follow
 - **Windows support** — most laptop webcam LEDs are likewise hardwired to
   capture; the same hold-the-camera trick should port via Media Foundation,
   with vendor keyboard-backlight SDKs as further backends
