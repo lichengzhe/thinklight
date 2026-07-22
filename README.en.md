@@ -21,11 +21,11 @@ from across the room, and it's wired to the camera sensor's power at the
 hardware level — macOS provides no API to control it directly; it is on if
 and only if the camera is actually capturing.
 
-ThinkLight opens minimal capture sessions on both the Mac's built-in camera
-and an attached Studio Display camera (lowest preset, every frame discarded,
-nothing stored) to switch both LEDs on, and kills the sessions to switch them
-off. Without a Studio Display, it automatically uses only the built-in camera.
-Agent lifecycle hooks do the rest.
+ThinkLight treats the Mac's built-in camera and an attached Studio Display
+camera as two status-light slots. The first active session takes the built-in
+LED, the second takes the Studio Display LED, and further sessions go to the
+less-used side. Each LED goes dark only when its last assigned session ends.
+Without a Studio Display, every session shares the built-in LED.
 
 ## Install
 
@@ -35,26 +35,27 @@ Requires macOS with Xcode Command Line Tools (`swiftc`).
 git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
 ./install.sh                    # builds to ~/.local/bin
-~/.local/bin/thinklight blink 3 # first run triggers the camera permission prompt
-~/.local/bin/thinklight check   # built-in and Studio Display cameras should report RUNNING
+~/.local/bin/thinklight blink 3 # first run requests permission and lights an LED for 3s
 ```
 
-To upgrade later: `git pull && ./install.sh`. The hooks run the copy
-installed in `~/.local/bin`, so a plugin update alone refreshes the repo
-but not the installed binaries — re-run `install.sh` after updating.
-No state migration is ever needed.
+ThinkLight checks `main` once every 24 hours in the background and sends a
+macOS notification when an update is available; it never installs updates
+automatically. Run `thinklight update --check` to check manually, or
+`thinklight update` to fast-forward a clean `main` checkout, rebuild, and
+preserve the current session state. `git pull && ./install.sh` still works.
 
 ## Usage
 
 ```
-thinklight on              register this session and turn the LED on
-thinklight off [--force]   deregister this session; the LED goes off when the
-                           last session leaves (--force, or a plain `off`
+thinklight on              register this session and assign a status LED
+thinklight off [--force]   deregister this session; its LED goes off when the
+                           last assigned session leaves (--force, or plain `off`
                            typed at a terminal: clear all sessions, off now)
 thinklight status          on | off
 thinklight blink [secs]    on, wait, off
-thinklight pulse [times]   alternate both LEDs n times (default 3; blink one), then stay on
 thinklight check           hardware-level truth via CoreMediaIO
+thinklight update --check  check whether an update is available
+thinklight update          safely update the source and reinstall
 ```
 
 ## Claude Code
@@ -97,8 +98,8 @@ light is meaningful in interactive sessions only.
 
 ## How it works
 
-`thinklight-daemon` opens a separate `AVCaptureSession` for the Mac's built-in
-camera and the Apple Studio Display camera, each with an
+`thinklight-daemon` can open an independent `AVCaptureSession` for either the
+Mac's built-in camera or the Apple Studio Display camera, each with an
 `AVCaptureVideoDataOutput` that discards every frame — a session needs an
 output before it actually starts capturing and lights the LED. Other external
 cameras and Continuity Camera iPhones are excluded.
@@ -120,13 +121,14 @@ this project is built on.
 
 **Power?** Lowest session preset, no encoding, no I/O. Negligible.
 
-**Multiple agents / sessions?** Fully supported. Claude Code and Codex
-sessions all share one LED: each session registers a token under
-`~/.local/state/thinklight` when a prompt starts and removes it when the
-turn ends, and the light goes dark only when the **last** session finishes.
-When one session stops while others are still working, the Mac and Studio
-Display LEDs alternate three times before both stay on again (or the one
-available LED blinks) — a glanceable "one of them is done".
+**Multiple agents / sessions?** Fully supported. Each session registers a token
+under `~/.local/state/thinklight` when a prompt starts and removes it when the
+turn ends. With a Studio Display, the first active session takes the built-in
+LED, the second takes the Studio Display LED, and further sessions go to the
+side with fewer active sessions (built-in wins ties). Each LED is independently
+reference-counted and goes dark when its last assigned session finishes.
+Without a Studio Display—or after it is disconnected—every session
+automatically shares the built-in LED.
 Tokens are verified against live processes on every call, so a crashed
 session can never leave the LED stuck on; and a plain `thinklight off`
 typed by a human always wins immediately.

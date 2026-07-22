@@ -1,14 +1,12 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|pulse [times]|check
-# Use the Mac camera LED as a silent, glanceable "AI agent is working" indicator.
+# thinklight on|off [--force]|status|blink [seconds]|check
+# Use the Mac camera LEDs as silent, glanceable "AI agent is working" indicators.
 #
 # Multi-session refcounting, self-healing by design: each session's `on` drops
-# a token file named by its hook session_id (or agent-host PID) under
-# ~/.local/state/thinklight; `off` removes that session's token and kills the
-# daemon only when no tokens remain, so the light stays on until every
-# concurrent agent session has stopped. When one session stops while others
-# are still working, the Mac and Studio Display LEDs alternate three times
-# (or one LED blinks) and then every available LED stays on.
+# a token containing its owner PID and assigned camera backend. With a Studio
+# Display attached, new sessions take the less-used light (built-in wins ties);
+# without one, every session shares the built-in light. `off` only extinguishes
+# a backend when its last assigned session leaves.
 # Tokens are hints, never trusted state — on/off sweep any token whose
 # recorded process has exited, so a crashed session cannot leave the LED stuck
 # on. The daemon process itself (matched with pgrep -fx on its full path —
@@ -18,18 +16,17 @@ DAEMON="$HOME/.local/bin/thinklight-daemon"
 STATE="$HOME/.local/state/thinklight"
 SESSIONS="$STATE/sessions"
 STATE_LOCK="$STATE/state.lock"
-PULSE_LOCK="$STATE/pulse.lock"
+SOURCE_FILE="$STATE/source"
+REVISION_FILE="$STATE/revision"
+UPDATE_CHECK_FILE="$STATE/update-check"
+REPO_URL="https://github.com/lichengzhe/thinklight.git"
 mkdir -p "$SESSIONS"
 
 STATE_LOCK_HELD=0
-PULSE_LOCK_HELD=0
 
 cleanup() {
   if [[ "$STATE_LOCK_HELD" == 1 && "$(cat "$STATE_LOCK" 2>/dev/null)" == "$$" ]]; then
     rm -f "$STATE_LOCK"
-  fi
-  if [[ "$PULSE_LOCK_HELD" == 1 && "$(cat "$PULSE_LOCK" 2>/dev/null)" == "$$" ]]; then
-    rm -f "$PULSE_LOCK"
   fi
 }
 trap cleanup EXIT
@@ -89,20 +86,47 @@ OWNER_PID=$(owner_pid)
 [[ "$KEY" =~ ^[A-Za-z0-9._-]+$ && "$KEY" != "." && "$KEY" != ".." ]] || KEY="ppid-$OWNER_PID"
 
 sweep() {
-  local f pid
+  local f pid backend
   for f in "$SESSIONS"/*; do
     [[ -e "$f" ]] || continue
-    pid=$(cat "$f" 2>/dev/null)
+    read -r pid backend < "$f"
     [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || rm -f "$f"
   done
 }
 
-has_sessions() {
-  local f
+token_backend() {
+  local pid backend
+  read -r pid backend < "$1"
+  echo "${backend:-built-in}"
+}
+
+backend_session_count() {
+  local wanted=$1 f backend count=0
   for f in "$SESSIONS"/*; do
-    [[ -e "$f" ]] && return 0
+    [[ -e "$f" ]] || continue
+    backend=$(token_backend "$f")
+    [[ "$backend" == "$wanted" ]] && count=$((count + 1))
   done
-  return 1
+  echo "$count"
+}
+
+has_backend_sessions() {
+  [[ "$(backend_session_count "$1")" -gt 0 ]]
+}
+
+choose_backend() {
+  local built_in_count studio_count
+  if ! "$DAEMON" has-studio >/dev/null 2>&1; then
+    echo built-in
+    return 0
+  fi
+  built_in_count=$(backend_session_count built-in)
+  studio_count=$(backend_session_count studio)
+  if [[ "$built_in_count" -le "$studio_count" ]]; then
+    echo built-in
+  else
+    echo studio
+  fi
 }
 
 daemon_running() {
@@ -112,46 +136,114 @@ daemon_running() {
     || pgrep -qfx "$DAEMON studio"
 }
 
-start_daemon() {
-  local target=${1:-both}
-  pgrep -qfx "$DAEMON $target" && return 0
-  daemon_running && stop_daemon
-  nohup "$DAEMON" "$target" >/dev/null 2>&1 &
+start_backend() {
+  local backend=$1 pid tries=0
+  pgrep -qfx "$DAEMON $backend" && return 0
+  nohup "$DAEMON" "$backend" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    pgrep -qfx "$DAEMON $backend" && return 0
+    tries=$((tries + 1))
+    [[ "$tries" -lt 20 ]] || break
+    sleep 0.05
+  done
+  return 1
 }
 
-stop_daemon() {
-  local tries=0
-  pkill -fx "$DAEMON" 2>/dev/null || true
-  pkill -fx "$DAEMON both" 2>/dev/null || true
-  pkill -fx "$DAEMON built-in" 2>/dev/null || true
-  pkill -fx "$DAEMON studio" 2>/dev/null || true
-  while daemon_running; do
+stop_backend() {
+  local backend=$1 tries=0
+  pkill -fx "$DAEMON $backend" 2>/dev/null || return 0
+  while pgrep -qfx "$DAEMON $backend"; do
     tries=$((tries + 1))
-    [[ "$tries" -lt 20 ]] || return 0
+    [[ "$tries" -lt 20 ]] || break
     sleep 0.05
   done
 }
 
-pulse_switch() {
-  local target=$1
-  lock_or_die
-  sweep
-  if ! has_sessions; then
-    stop_daemon
-    release_state_lock
+stop_legacy_daemons() {
+  local tries=0
+  pkill -fx "$DAEMON" 2>/dev/null || true
+  pkill -fx "$DAEMON both" 2>/dev/null || true
+  while pgrep -qfx "$DAEMON" || pgrep -qfx "$DAEMON both"; do
+    tries=$((tries + 1))
+    [[ "$tries" -lt 20 ]] || break
+    sleep 0.05
+  done
+}
+
+reconcile_daemons() {
+  local backend f pid assigned
+  stop_legacy_daemons
+  if ! "$DAEMON" has-studio >/dev/null 2>&1; then
+    for f in "$SESSIONS"/*; do
+      [[ -e "$f" ]] || continue
+      read -r pid assigned < "$f"
+      [[ "${assigned:-built-in}" == studio ]] && echo "$pid built-in" > "$f"
+    done
+  fi
+  for backend in built-in studio; do
+    if has_backend_sessions "$backend"; then
+      start_backend "$backend"
+    else
+      stop_backend "$backend"
+    fi
+  done
+}
+
+remote_revision() {
+  git ls-remote "$REPO_URL" refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }'
+}
+
+check_update() {
+  local installed remote
+  installed=$(cat "$REVISION_FILE" 2>/dev/null)
+  [[ -n "$installed" ]] || { echo "thinklight: installed revision unknown; run install.sh again" >&2; return 1; }
+  remote=$(remote_revision)
+  [[ -n "$remote" ]] || { echo "thinklight: could not check for updates" >&2; return 1; }
+  if [[ "$installed" == "$remote" ]]; then
+    echo "thinklight: up to date (${installed:0:7})"
+  else
+    echo "thinklight: update available (${installed:0:7} -> ${remote:0:7}); run: thinklight update"
+  fi
+}
+
+schedule_update_check() {
+  local now last=0
+  now=$(date +%s)
+  [[ -f "$UPDATE_CHECK_FILE" ]] && last=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null)
+  [[ "$last" =~ ^[0-9]+$ ]] || last=0
+  [[ $((now - last)) -ge 86400 ]] || return 0
+  echo "$now" > "$UPDATE_CHECK_FILE"
+  nohup "$0" _check_update_notify </dev/null >/dev/null 2>&1 &
+}
+
+perform_update() {
+  local source branch
+  source=$(cat "$SOURCE_FILE" 2>/dev/null)
+  [[ -n "$source" && -d "$source/.git" && -x "$source/install.sh" ]] || {
+    echo "thinklight: source checkout unavailable; clone the repo and run install.sh" >&2
+    return 1
+  }
+  branch=$(git -C "$source" branch --show-current)
+  [[ "$branch" == main ]] || { echo "thinklight: refusing to update source branch '$branch' (expected main)" >&2; return 1; }
+  if ! git -C "$source" diff --quiet || ! git -C "$source" diff --cached --quiet; then
+    echo "thinklight: source checkout has uncommitted changes; update manually" >&2
     return 1
   fi
-  stop_daemon
-  [[ "$target" == off ]] || start_daemon "$target"
-  release_state_lock
+  git -C "$source" pull --ff-only origin main || return 1
+  "$source/install.sh"
 }
 
 case "${1:-status}" in
   on)
+    local_backend=""
     lock_or_die
     sweep
-    echo "$OWNER_PID" > "$SESSIONS/$KEY"
-    start_daemon
+    rm -f "$SESSIONS/$KEY"
+    local_backend=$(choose_backend)
+    echo "$OWNER_PID $local_backend" > "$SESSIONS/$KEY"
+    reconcile_daemons
+    schedule_update_check
     release_state_lock
     ;;
   off)
@@ -164,39 +256,9 @@ case "${1:-status}" in
       rm -f "$SESSIONS/$KEY"
       sweep
     fi
-    if ! has_sessions; then
-      stop_daemon
-      release_state_lock
-    else
-      release_state_lock
-      # Other sessions still working: signal "one finished" with a slow triple
-      # pulse, detached so the hook returns well inside its timeout.
-      nohup "$0" pulse </dev/null >/dev/null 2>&1 &
-    fi
+    reconcile_daemons
+    release_state_lock
     exit 0
-    ;;
-  pulse)
-    # With a Studio Display attached, alternate its LED with the Mac's built-in
-    # LED for n cycles; otherwise blink the one available LED. Finish with every
-    # available LED on, unless all sessions stopped during the pulse.
-    /usr/bin/shlock -f "$PULSE_LOCK" -p $$ || exit 0
-    PULSE_LOCK_HELD=1
-    if "$DAEMON" has-studio >/dev/null 2>&1; then
-      for _ in $(seq 1 "${2:-3}"); do
-        pulse_switch built-in || exit 0
-        sleep 1
-        pulse_switch studio || exit 0
-        sleep 1
-      done
-    else
-      for _ in $(seq 1 "${2:-3}"); do
-        pulse_switch off || exit 0
-        sleep 1
-        pulse_switch both || exit 0
-        sleep 1
-      done
-    fi
-    pulse_switch both || exit 0
     ;;
   blink)
     "$0" on </dev/null; sleep "${2:-2}"; "$0" off </dev/null
@@ -207,8 +269,25 @@ case "${1:-status}" in
   check)
     exec "$HOME/.local/bin/thinklight-check"
     ;;
+  update)
+    if [[ "${2:-}" == "--check" ]]; then check_update; else perform_update; fi
+    ;;
+  _check_update_notify)
+    installed=$(cat "$REVISION_FILE" 2>/dev/null)
+    remote=$(remote_revision)
+    if [[ -n "$installed" && -n "$remote" && "$installed" != "$remote" ]]; then
+      /usr/bin/osascript -e 'display notification "Run thinklight update to install it." with title "ThinkLight update available"' >/dev/null 2>&1
+    fi
+    ;;
+  _sync)
+    # Internal upgrade hook: rebuild daemon state from existing session tokens.
+    lock_or_die
+    sweep
+    reconcile_daemons
+    release_state_lock
+    ;;
   *)
-    echo "usage: thinklight on|off [--force]|status|blink [seconds]|pulse [times]|check" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|update [--check]" >&2
     exit 64
     ;;
 esac

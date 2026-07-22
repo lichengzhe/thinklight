@@ -16,9 +16,10 @@ ThinkLight 把这个答案放进你的余光里：没有通知弹窗、没有提
 且与摄像头供电硬件联动——macOS 不提供单独控制它的 API，摄像头真正
 采集时必亮，停止必灭。
 
-ThinkLight 为 Mac 内建摄像头和已连接的 Studio Display 摄像头各打开一个最小化
-采集会话（最低分辨率、丢弃所有帧、不落盘）来同时点亮两盏灯，杀掉会话熄灯，
-agent 的生命周期 hooks 负责其余部分。没有 Studio Display 时自动只用内建摄像头。
+ThinkLight 把 Mac 内建摄像头和 Studio Display 摄像头当作两个状态灯槽位：第一条
+活跃 session 使用内建灯，第二条使用 Studio Display 灯，更多 session 分配给当前
+负载较少的一侧。每一路只在分配给它的最后一条 session 结束时熄灭。没有 Studio
+Display 时，所有 session 自动共用内建灯。
 
 ## 安装
 
@@ -28,25 +29,26 @@ agent 的生命周期 hooks 负责其余部分。没有 Studio Display 时自动
 git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
 ./install.sh                    # 编译安装到 ~/.local/bin
-~/.local/bin/thinklight blink 3 # 首次运行会弹摄像头授权框
-~/.local/bin/thinklight check   # 内建及 Studio Display Camera 应显示 RUNNING
+~/.local/bin/thinklight blink 3 # 首次运行会弹摄像头授权框并亮灯 3 秒
 ```
 
-后续升级：`git pull && ./install.sh`。hooks 调用的是安装到 `~/.local/bin`
-的副本，插件更新只刷新仓库、不更新已安装的二进制——更新后重跑一次
-`install.sh` 即可，无需任何状态迁移。
+ThinkLight 每 24 小时在后台检查一次 `main`，有新版时发送 macOS 通知（不会
+自动安装）。运行 `thinklight update --check` 可手动检查，`thinklight update`
+会在源码目录干净且位于 `main` 时执行 fast-forward 更新、重新编译，并保持现有
+session 状态。也可以继续手动运行 `git pull && ./install.sh`。
 
 ## 用法
 
 ```
-thinklight on              注册当前会话并点灯
-thinklight off [--force]   注销当前会话；最后一个会话离开时才熄灯
+thinklight on              注册当前会话并分配一盏状态灯
+thinklight off [--force]   注销当前会话；该灯的最后一个会话离开时才熄灭
                            （--force 或人在终端里直接敲 off：清空全部
                            会话、立即熄灯）
 thinklight status          on | off
 thinklight blink [秒]      亮、等待、灭
-thinklight pulse [次数]    双灯交替 n 轮（默认 3；单灯则明灭），然后常亮
 thinklight check           经 CoreMediaIO 读硬件层真实状态
+thinklight update --check  检查是否有新版
+thinklight update          安全更新源码并重新安装
 ```
 
 ## Claude Code
@@ -88,8 +90,8 @@ codex   # 在交互会话里确认 hook 信任提示
 
 ## 原理
 
-`thinklight-daemon` 为 Mac 内建摄像头和 Apple Studio Display 摄像头分别打开
-一个 `AVCaptureSession`，各挂一个把每一帧都直接丢弃的
+`thinklight-daemon` 可为 Mac 内建摄像头或 Apple Studio Display 摄像头分别打开
+独立的 `AVCaptureSession`，各挂一个把每一帧都直接丢弃的
 `AVCaptureVideoDataOutput`——会话要有输出才会真正启动采集、点亮 LED。
 其他外置摄像头和 iPhone 连续互通相机会被排除。
 `thinklight check` 通过 CoreMediaIO 读
@@ -107,11 +109,12 @@ codex   # 在交互会话里确认 hook 信任提示
 
 **功耗？** 最低档 preset，无编码无 I/O，可忽略。
 
-**多个 agent / 多个会话？** 完整支持。Claude Code、Codex 的各个会话共用
-一盏灯：每个会话在 prompt 开始时到 `~/.local/state/thinklight` 注册一个
-token、回合结束时注销，**最后一个**会话结束灯才熄灭。有会话先跑完而其他
-还在干活时，Mac 与 Studio Display 两盏灯会交替三轮再一起恢复常亮
-（只有一盏灯时则明灭三次）——瞥一眼就知道"有一个完事了"。
+**多个 agent / 多个会话？** 完整支持。每个会话在 prompt 开始时到
+`~/.local/state/thinklight` 注册一个 token、回合结束时注销。有 Studio Display
+时，第一条活跃 session 分到内建灯，第二条分到 Studio Display 灯，后续按两边
+当前 session 数量较少的一侧分配（相同时优先内建灯）。每盏灯独立计数，分配给
+它的最后一条 session 结束时才熄灭；没有或断开 Studio Display 时则全部自动
+并回内建灯。
 每次调用都会用存活进程核对 token，会话崩溃不可能把灯锁在常亮；人在终端
 里敲 `thinklight off` 永远立即生效。
 

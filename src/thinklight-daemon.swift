@@ -17,21 +17,19 @@ let builtInDevices = discoveredDevices.filter {
 }
 let studioDisplayDevices = discoveredDevices.filter(isStudioDisplayCamera)
 
-let target = CommandLine.arguments.dropFirst().first ?? "both"
+let target = CommandLine.arguments.dropFirst().first ?? "built-in"
 if target == "has-studio" {
     exit(studioDisplayDevices.isEmpty ? 1 : 0)
 }
 
 let devices: [AVCaptureDevice]
 switch target {
-case "both":
-    devices = builtInDevices + studioDisplayDevices
 case "built-in":
     devices = builtInDevices
 case "studio":
     devices = studioDisplayDevices
 default:
-    fputs("usage: thinklight-daemon [both|built-in|studio|has-studio]\n", stderr)
+    fputs("usage: thinklight-daemon [built-in|studio|has-studio]\n", stderr)
     exit(64)
 }
 
