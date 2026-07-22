@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "$HOME/.local/bin/thinklight off",
-            "timeout": 10
+            "timeout": 3
           }
         ]
       }
