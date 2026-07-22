@@ -1,28 +1,27 @@
 #!/bin/bash
 # thinklight on|off|status|blink [seconds]|check
-# Use the Mac camera LED as an unfakeable "AI agent is working" indicator.
+# Use the Mac camera LED as a silent, glanceable "AI agent is working" indicator.
+#
+# Stateless by design: the daemon process itself is the single source of truth,
+# found via pgrep on its full path. No pidfile — hook processes from different
+# apps (Claude Code, Codex, ...) may run with different TMPDIRs, and a stale
+# pidfile can orphan a daemon that then keeps the LED on forever.
 DAEMON="$HOME/.local/bin/thinklight-daemon"
-PIDFILE="${TMPDIR:-/tmp}/thinklight.pid"
-
-is_on() {
-  [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
-}
 
 case "${1:-status}" in
   on)
-    if is_on; then exit 0; fi
+    pgrep -qf "$DAEMON" && exit 0
     nohup "$DAEMON" >/dev/null 2>&1 &
-    echo $! > "$PIDFILE"
     ;;
   off)
-    if is_on; then kill "$(cat "$PIDFILE")" 2>/dev/null; fi
-    rm -f "$PIDFILE"
+    pkill -f "$DAEMON" 2>/dev/null
+    exit 0
     ;;
   blink)
     "$0" on; sleep "${2:-2}"; "$0" off
     ;;
   status)
-    if is_on; then echo on; else echo off; fi
+    if pgrep -qf "$DAEMON"; then echo on; else echo off; fi
     ;;
   check)
     exec "$HOME/.local/bin/thinklight-check"
