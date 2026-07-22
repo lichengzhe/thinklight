@@ -1,26 +1,80 @@
 #!/bin/bash
-# thinklight on|off|status|blink [seconds]|check
+# thinklight on|off [--force]|status|blink [seconds]|pulse [times]|check
 # Use the Mac camera LED as a silent, glanceable "AI agent is working" indicator.
 #
-# Stateless by design: the daemon process itself is the single source of truth,
-# found via pgrep -fx on its full path (exact match, so an editor or pager with
-# this path in its argv is never mistaken for the daemon). No pidfile — hook
-# processes from different apps (Claude Code, Codex, ...) may run with different
-# TMPDIRs, and a stale pidfile can orphan a daemon that then keeps the LED on
-# forever.
+# Multi-session refcounting, self-healing by design: each session's `on` drops
+# a token file named by its hook session_id (or parent PID) under
+# ~/.local/state/thinklight; `off` removes that session's token and kills the
+# daemon only when no tokens remain, so the light stays on until every
+# concurrent agent session has stopped. When one session stops while others
+# are still working, the light pulses slowly three times and then stays on.
+# Tokens are hints, never trusted state — on/off sweep any token whose
+# recorded process has exited, so a crashed session cannot leave the LED stuck
+# on. The daemon process itself (matched with pgrep -fx on its full path —
+# exact, so an editor or pager open on that path is never mistaken for it)
+# remains the single source of truth for the LED.
 DAEMON="$HOME/.local/bin/thinklight-daemon"
+SESSIONS="$HOME/.local/state/thinklight/sessions"
+mkdir -p "$SESSIONS"
+
+# Hooks pipe a JSON payload on stdin; its session_id names the token so this
+# session's on and off pair up even across apps with different environments.
+# Manual runs (or payloads without one) fall back to the parent process's PID.
+KEY=""
+[[ -t 0 ]] || KEY=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+KEY=${KEY:-ppid-$PPID}
+
+sweep() {
+  local f pid
+  for f in "$SESSIONS"/*; do
+    [[ -e "$f" ]] || continue
+    pid=$(cat "$f" 2>/dev/null)
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || rm -f "$f"
+  done
+}
+
+start_daemon() {
+  pgrep -qfx "$DAEMON" && return 0
+  nohup "$DAEMON" >/dev/null 2>&1 &
+}
 
 case "${1:-status}" in
   on)
-    pgrep -qfx "$DAEMON" && exit 0
-    nohup "$DAEMON" >/dev/null 2>&1 &
+    sweep
+    echo "$PPID" > "$SESSIONS/$KEY"
+    start_daemon
     ;;
   off)
-    pkill -fx "$DAEMON" 2>/dev/null
+    # A human typing `off` at a terminal means "light off, now" — honor it even
+    # if agent sessions are still registered. Hooks (stdin is a pipe) refcount.
+    if [[ "${2:-}" == "--force" || -t 0 ]]; then
+      rm -f "$SESSIONS"/*
+    else
+      rm -f "$SESSIONS/$KEY"
+      sweep
+    fi
+    if [[ -z "$(ls -A "$SESSIONS")" ]]; then
+      pkill -fx "$DAEMON" 2>/dev/null
+    else
+      # Other sessions still working: signal "one finished" with a slow triple
+      # pulse, detached so the hook returns well inside its timeout.
+      nohup "$0" pulse >/dev/null 2>&1 &
+    fi
     exit 0
     ;;
+  pulse)
+    # Blink slowly n times, then leave the light on — unless every session
+    # stopped mid-pulse, in which case stay dark rather than resurrect the LED.
+    for _ in $(seq 1 "${2:-3}"); do
+      pkill -fx "$DAEMON" 2>/dev/null
+      sleep 0.7
+      [[ -n "$(ls -A "$SESSIONS")" ]] || exit 0
+      start_daemon
+      sleep 1.6
+    done
+    ;;
   blink)
-    "$0" on; sleep "${2:-2}"; "$0" off
+    "$0" on </dev/null; sleep "${2:-2}"; "$0" off </dev/null
     ;;
   status)
     if pgrep -qfx "$DAEMON"; then echo on; else echo off; fi
@@ -29,7 +83,7 @@ case "${1:-status}" in
     exec "$HOME/.local/bin/thinklight-check"
     ;;
   *)
-    echo "usage: thinklight on|off|status|blink [seconds]|check" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|pulse [times]|check" >&2
     exit 64
     ;;
 esac

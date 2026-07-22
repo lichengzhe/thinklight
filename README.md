@@ -37,13 +37,21 @@ cd thinklight
 ~/.local/bin/thinklight check   # FaceTime HD Camera should report RUNNING
 ```
 
+To upgrade later: `git pull && ./install.sh`. The hooks run the copy
+installed in `~/.local/bin`, so a plugin update alone refreshes the repo
+but not the installed binaries — re-run `install.sh` after updating.
+No state migration is ever needed.
+
 ## Usage
 
 ```
-thinklight on              turn the LED on (spawns a tiny daemon)
-thinklight off             turn it off
+thinklight on              register this session and turn the LED on
+thinklight off [--force]   deregister this session; the LED goes off when the
+                           last session leaves (--force, or a plain `off`
+                           typed at a terminal: clear all sessions, off now)
 thinklight status          on | off
 thinklight blink [secs]    on, wait, off
+thinklight pulse [times]   blink slowly n times (default 3), then stay on
 thinklight check           hardware-level truth via CoreMediaIO
 ```
 
@@ -114,11 +122,15 @@ this project is built on.
 
 **Power?** Lowest session preset, no encoding, no I/O. Negligible.
 
-**Multiple agent sessions?** They share one LED, and the first session to
-stop turns it off — even if another session is still working (it lights up
-again on that session's next prompt). Deliberate bias: a dark LED can be
-stale, a lit LED never lies. Precise per-session refcounting is a possible
-future improvement.
+**Multiple agents / sessions?** Fully supported. Claude Code and Codex
+sessions all share one LED: each session registers a token under
+`~/.local/state/thinklight` when a prompt starts and removes it when the
+turn ends, and the light goes dark only when the **last** session finishes.
+When one session stops while others are still working, the light pulses
+slowly three times and then stays on — a glanceable "one of them is done".
+Tokens are verified against live processes on every call, so a crashed
+session can never leave the LED stuck on; and a plain `thinklight off`
+typed by a human always wins immediately.
 
 **~2s latency from prompt to light** is the camera powering up. Normal.
 
@@ -136,8 +148,6 @@ camera LED is the first backend; planned/possible backends include:
   setups with no controllable LED at all
 - **Multi-state signaling** — blink patterns for "waiting for approval"
   (`Notification` hook) vs steady-on for "working"
-- **Per-session refcounting** — accurate indication with multiple concurrent
-  agent sessions
 - **Windows support** — most laptop webcam LEDs are likewise hardwired to
   capture; the same hold-the-camera trick should port via Media Foundation,
   with vendor keyboard-backlight SDKs as further backends
