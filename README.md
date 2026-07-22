@@ -1,4 +1,4 @@
-# ThinkLight 💡
+# ThinkLight 🟢
 
 **一盏静默、不打扰的 AI agent 状态灯——用 Mac 摄像头绿灯实现。**
 

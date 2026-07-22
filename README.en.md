@@ -1,4 +1,4 @@
-# ThinkLight 💡
+# ThinkLight 🟢
 
 **A silent, glanceable status light for AI agents — powered by your Mac's
 camera LED.**
