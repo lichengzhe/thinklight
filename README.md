@@ -1,63 +1,56 @@
 # ThinkLight 💡
 
-**A silent, glanceable status light for AI agents — powered by your Mac's
-camera LED.**
+**一盏静默、不打扰的 AI agent 状态灯——用 Mac 摄像头绿灯实现。**
 
-Green light on → your agent (Claude Code, Codex, …) is still working.
-Light off → it's done. Your turn.
+绿灯亮 → agent（Claude Code、Codex 等）还在跑；灯灭 → 跑完了，轮到你。
 
-[中文文档](README.zh-CN.md)
+[English](README.en.md)
 
-## Why?
+## 为什么？
 
-Agents run long. You switch to other work — and then keep interrupting
-yourself to check whether they're finished. ThinkLight moves that answer
-into your peripheral vision: no notification to dismiss, no sound, no window
-to keep visible. One glance. Light on: keep doing what you're doing.
-Light off: the run is over.
+Agent 一跑就是好几分钟。你切去干别的事，又忍不住反复切回来看它跑完没有。
+ThinkLight 把这个答案放进你的余光里：没有通知弹窗、没有提示音、不用留着
+窗口盯终端。抬眼一瞥——灯亮着，继续干自己的事；灯灭了，跑完了。
 
-The camera LED happens to be perfect for this. It sits at eye level, visible
-from across the room, and it's wired to the camera sensor's power at the
-hardware level — macOS provides no API to control it directly; it is on if
-and only if the camera is actually capturing.
+摄像头 LED 恰好是这件事的完美载体：它与视线平齐、隔着房间都能看见，
+且与摄像头供电硬件联动——macOS 不提供单独控制它的 API，摄像头真正
+采集时必亮，停止必灭。
 
-ThinkLight opens a minimal capture session on the built-in camera (lowest
-preset, every frame discarded, nothing stored) to switch the LED on, and
-kills the session to switch it off. Agent lifecycle hooks do the rest.
+ThinkLight 打开一个最小化的内建摄像头采集会话（最低分辨率、丢弃所有帧、
+不落盘）来点灯，杀掉会话熄灯，agent 的生命周期 hooks 负责其余部分。
 
-## Install
+## 安装
 
-Requires macOS with Xcode Command Line Tools (`swiftc`).
+需要 macOS + Xcode Command Line Tools（`swiftc`）。
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
-./install.sh                    # builds to ~/.local/bin
-~/.local/bin/thinklight blink 3 # first run triggers the camera permission prompt
-~/.local/bin/thinklight check   # FaceTime HD Camera should report RUNNING
+./install.sh                    # 编译安装到 ~/.local/bin
+~/.local/bin/thinklight blink 3 # 首次运行会弹摄像头授权框
+~/.local/bin/thinklight check   # FaceTime HD Camera 应显示 RUNNING
 ```
 
-To upgrade later: `git pull && ./install.sh`. The hooks run the copy
-installed in `~/.local/bin`, so a plugin update alone refreshes the repo
-but not the installed binaries — re-run `install.sh` after updating.
-No state migration is ever needed.
+后续升级：`git pull && ./install.sh`。hooks 调用的是安装到 `~/.local/bin`
+的副本，插件更新只刷新仓库、不更新已安装的二进制——更新后重跑一次
+`install.sh` 即可，无需任何状态迁移。
 
-## Usage
+## 用法
 
 ```
-thinklight on              register this session and turn the LED on
-thinklight off [--force]   deregister this session; the LED goes off when the
-                           last session leaves (--force, or a plain `off`
-                           typed at a terminal: clear all sessions, off now)
+thinklight on              注册当前会话并点灯
+thinklight off [--force]   注销当前会话；最后一个会话离开时才熄灯
+                           （--force 或人在终端里直接敲 off：清空全部
+                           会话、立即熄灯）
 thinklight status          on | off
-thinklight blink [secs]    on, wait, off
-thinklight pulse [times]   blink slowly n times (default 3), then stay on
-thinklight check           hardware-level truth via CoreMediaIO
+thinklight blink [秒]      亮、等待、灭
+thinklight pulse [次数]    慢闪 n 下（默认 3），然后保持常亮
+thinklight check           经 CoreMediaIO 读硬件层真实状态
 ```
 
 ## Claude Code
 
-Add to `~/.claude/settings.json` (merge with existing settings):
+`~/.claude/settings.json` 增加（与现有配置合并）：
 
 ```json
 "hooks": {
@@ -73,7 +66,7 @@ Add to `~/.claude/settings.json` (merge with existing settings):
 }
 ```
 
-Or install as a plugin — this repo is also a plugin marketplace:
+也可以走插件（本仓库本身就是一个 plugin marketplace）：
 
 ```
 /plugin marketplace add lichengzhe/thinklight
@@ -82,83 +75,70 @@ Or install as a plugin — this repo is also a plugin marketplace:
 
 ## Codex CLI
 
-Codex (≥ 0.145) uses the same hooks format, loaded via plugins:
+Codex（≥ 0.145）hooks 格式与 Claude Code 相同，经插件挂入：
 
 ```bash
 codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
 codex plugin add thinklight@thinklight
-codex   # accept the hook trust prompt in the interactive session
+codex   # 在交互会话里确认 hook 信任提示
 ```
 
-Note: `codex exec` (non-interactive) does not fire `UserPromptSubmit`, so the
-light is meaningful in interactive sessions only.
+注意：`codex exec` 非交互模式不触发 `UserPromptSubmit`，灯只在交互会话里有意义。
 
-## How it works — and the pitfall
+## 原理与踩坑
 
-`thinklight-daemon` is ~60 lines of Swift: an `AVCaptureSession` on the
-built-in camera (`.builtInWideAngleCamera` only — it will never grab your
-Studio Display or Continuity iPhone camera) with a delegate that discards
-every frame.
+`thinklight-daemon` 约 60 行 Swift：在内建摄像头（只匹配
+`.builtInWideAngleCamera`，绝不会误开 Studio Display 或 iPhone 连续互通
+相机）上开一个 `AVCaptureSession`，delegate 丢弃所有帧。
 
-The non-obvious part: **a session with an input but no output never actually
-starts capturing** — `session.isRunning` reports `true` while the camera
-stays dark. You must attach an `AVCaptureVideoDataOutput`, even one that
-throws every frame away. `thinklight check` reads
-`kCMIODevicePropertyDeviceIsRunningSomewhere` via CoreMediaIO so you can
-assert the hardware state instead of trusting the API or your eyes.
+不显然的坑：**只有输入没有输出的会话不会真正启动采集**——
+`session.isRunning` 返回 `true` 但摄像头是黑的、灯不亮。必须挂一个
+`AVCaptureVideoDataOutput`，哪怕它把每一帧都扔掉。`thinklight check`
+通过 CoreMediaIO 读 `kCMIODevicePropertyDeviceIsRunningSomewhere`，
+用硬件层状态做断言，不要信 API，也不要只靠肉眼。
 
 ## FAQ
 
-**Does it interfere with video calls?**
-No. macOS allows multiple processes to share the camera; Zoom / Meet /
-Tencent Meeting open it normally while ThinkLight holds it, and each side is
-unaffected when the other exits. (During a call the LED is on anyway, so the
-indicator is temporarily meaningless.)
+**影响视频会议吗？** 不影响。macOS 允许多进程共享摄像头，实测 ThinkLight
+占用期间腾讯会议/Zoom 正常入会，任一方退出另一方不受影响。（开会时灯
+本来就常亮，指示暂时失去意义。）
 
-**Privacy?** Frames are discarded inside the capture callback; nothing is
-read, processed, or written. The menu bar will show the standard green
-"camera in use" indicator attributed to your terminal — that's the OS honesty
-this project is built on.
+**隐私？** 帧在回调里直接丢弃，不读取、不处理、不写盘。菜单栏会显示
+标准的绿色"摄像头使用中"指示（归属你的终端 App）——本项目正是建立在
+系统这种诚实性之上。
 
-**Power?** Lowest session preset, no encoding, no I/O. Negligible.
+**功耗？** 最低档 preset，无编码无 I/O，可忽略。
 
-**Multiple agents / sessions?** Fully supported. Claude Code and Codex
-sessions all share one LED: each session registers a token under
-`~/.local/state/thinklight` when a prompt starts and removes it when the
-turn ends, and the light goes dark only when the **last** session finishes.
-When one session stops while others are still working, the light pulses
-slowly three times and then stays on — a glanceable "one of them is done".
-Tokens are verified against live processes on every call, so a crashed
-session can never leave the LED stuck on; and a plain `thinklight off`
-typed by a human always wins immediately.
+**多个 agent / 多个会话？** 完整支持。Claude Code、Codex 的各个会话共用
+一盏灯：每个会话在 prompt 开始时到 `~/.local/state/thinklight` 注册一个
+token、回合结束时注销，**最后一个**会话结束灯才熄灭。有会话先跑完而其他
+还在干活时，灯会慢闪三下再恢复常亮——瞥一眼就知道"有一个完事了"。
+每次调用都会用存活进程核对 token，会话崩溃不可能把灯锁在常亮；人在终端
+里敲 `thinklight off` 永远立即生效。
 
-**~2s latency from prompt to light** is the camera powering up. Normal.
+**提交到亮灯约 2 秒延迟**是摄像头上电时间，正常。
 
 ## Roadmap
 
-ThinkLight's core idea is `agent state → a physical light`. The built-in
-camera LED is the first backend; planned/possible backends include:
+ThinkLight 的核心抽象是「agent 状态 → 一盏物理灯」。内建摄像头 LED
+只是第一个 backend，计划/可能的后续 backend：
 
-- **Keyboard backlight** — pulse or toggle the MacBook keyboard backlight
-  (CoreBrightness) as a subtler, silent indicator
-- **External camera LEDs** — same capture-session trick on UVC webcams and
-  the Studio Display camera (select a backend per display setup, e.g.
-  clamshell mode where the built-in LED is hidden)
-- **Display-based indicators** — brightness pulse or a screen-edge glow for
-  setups with no controllable LED at all
-- **Multi-state signaling** — blink patterns for "waiting for approval"
-  (`Notification` hook) vs steady-on for "working"
-- **Windows support** — most laptop webcam LEDs are likewise hardwired to
-  capture; the same hold-the-camera trick should port via Media Foundation,
-  with vendor keyboard-backlight SDKs as further backends
+- **键盘背光** —— 用 MacBook 键盘背光（CoreBrightness）做更含蓄的指示，
+  脉冲或开关
+- **外置摄像头灯** —— 同样的采集会话技巧用在 UVC 摄像头和 Studio Display
+  摄像头上（按使用场景选 backend，比如合盖模式下内建灯不可见）
+- **屏幕指示** —— 亮度脉冲或屏幕边缘光晕，覆盖完全没有可控 LED 的设备
+- **多状态信号** —— "等待授权"用闪烁（`Notification` hook）、
+  "干活中"用常亮
+- **Windows 支持** —— 多数笔记本摄像头灯同样与采集硬件联动，
+  同一招式可经 Media Foundation 移植；各厂商键盘背光 SDK 可作更多 backend
 
-Contributions welcome.
+欢迎贡献。
 
-## Disclaimer
+## 免责声明
 
-ThinkLight is an independent open-source project, not affiliated with or
-endorsed by Lenovo (whose ThinkPad keyboard light of the same name we
-remember fondly) or Apple.
+ThinkLight 是独立开源项目，与联想（我们深情怀念的同名 ThinkPad 键盘灯）
+及苹果均无关联。
 
 ## License
 
