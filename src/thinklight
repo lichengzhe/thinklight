@@ -7,7 +7,8 @@
 # ~/.local/state/thinklight; `off` removes that session's token and kills the
 # daemon only when no tokens remain, so the light stays on until every
 # concurrent agent session has stopped. When one session stops while others
-# are still working, the light pulses slowly three times and then stays on.
+# are still working, the Mac and Studio Display LEDs alternate three times
+# (or one LED blinks) and then every available LED stays on.
 # Tokens are hints, never trusted state — on/off sweep any token whose
 # recorded process has exited, so a crashed session cannot leave the LED stuck
 # on. The daemon process itself (matched with pgrep -fx on its full path —
@@ -104,19 +105,45 @@ has_sessions() {
   return 1
 }
 
+daemon_running() {
+  pgrep -qfx "$DAEMON" \
+    || pgrep -qfx "$DAEMON both" \
+    || pgrep -qfx "$DAEMON built-in" \
+    || pgrep -qfx "$DAEMON studio"
+}
+
 start_daemon() {
-  pgrep -qfx "$DAEMON" && return 0
-  nohup "$DAEMON" >/dev/null 2>&1 &
+  local target=${1:-both}
+  pgrep -qfx "$DAEMON $target" && return 0
+  daemon_running && stop_daemon
+  nohup "$DAEMON" "$target" >/dev/null 2>&1 &
 }
 
 stop_daemon() {
   local tries=0
-  pkill -fx "$DAEMON" 2>/dev/null || return 0
-  while pgrep -qfx "$DAEMON"; do
+  pkill -fx "$DAEMON" 2>/dev/null || true
+  pkill -fx "$DAEMON both" 2>/dev/null || true
+  pkill -fx "$DAEMON built-in" 2>/dev/null || true
+  pkill -fx "$DAEMON studio" 2>/dev/null || true
+  while daemon_running; do
     tries=$((tries + 1))
     [[ "$tries" -lt 20 ]] || return 0
     sleep 0.05
   done
+}
+
+pulse_switch() {
+  local target=$1
+  lock_or_die
+  sweep
+  if ! has_sessions; then
+    stop_daemon
+    release_state_lock
+    return 1
+  fi
+  stop_daemon
+  [[ "$target" == off ]] || start_daemon "$target"
+  release_state_lock
 }
 
 case "${1:-status}" in
@@ -149,42 +176,33 @@ case "${1:-status}" in
     exit 0
     ;;
   pulse)
-    # Blink slowly n times, then leave the light on — unless every session
-    # stopped mid-pulse, in which case stay dark rather than resurrect the LED.
-    # Use an even, unhurried cadence: one second dark, one second lit. Only one
-    # pulse sequence may run at a time; state transitions remain independently
-    # locked so a final `off` can interrupt it without the LED being resurrected.
+    # With a Studio Display attached, alternate its LED with the Mac's built-in
+    # LED for n cycles; otherwise blink the one available LED. Finish with every
+    # available LED on, unless all sessions stopped during the pulse.
     /usr/bin/shlock -f "$PULSE_LOCK" -p $$ || exit 0
     PULSE_LOCK_HELD=1
-    for _ in $(seq 1 "${2:-3}"); do
-      lock_or_die
-      sweep
-      if ! has_sessions; then
-        stop_daemon
-        release_state_lock
-        exit 0
-      fi
-      stop_daemon
-      release_state_lock
-      sleep 1
-
-      lock_or_die
-      sweep
-      if ! has_sessions; then
-        stop_daemon
-        release_state_lock
-        exit 0
-      fi
-      start_daemon
-      release_state_lock
-      sleep 1
-    done
+    if "$DAEMON" has-studio >/dev/null 2>&1; then
+      for _ in $(seq 1 "${2:-3}"); do
+        pulse_switch built-in || exit 0
+        sleep 1
+        pulse_switch studio || exit 0
+        sleep 1
+      done
+    else
+      for _ in $(seq 1 "${2:-3}"); do
+        pulse_switch off || exit 0
+        sleep 1
+        pulse_switch both || exit 0
+        sleep 1
+      done
+    fi
+    pulse_switch both || exit 0
     ;;
   blink)
     "$0" on </dev/null; sleep "${2:-2}"; "$0" off </dev/null
     ;;
   status)
-    if pgrep -qfx "$DAEMON"; then echo on; else echo off; fi
+    if daemon_running; then echo on; else echo off; fi
     ;;
   check)
     exec "$HOME/.local/bin/thinklight-check"

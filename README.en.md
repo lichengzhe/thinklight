@@ -21,9 +21,11 @@ from across the room, and it's wired to the camera sensor's power at the
 hardware level — macOS provides no API to control it directly; it is on if
 and only if the camera is actually capturing.
 
-ThinkLight opens a minimal capture session on the built-in camera (lowest
-preset, every frame discarded, nothing stored) to switch the LED on, and
-kills the session to switch it off. Agent lifecycle hooks do the rest.
+ThinkLight opens minimal capture sessions on both the Mac's built-in camera
+and an attached Studio Display camera (lowest preset, every frame discarded,
+nothing stored) to switch both LEDs on, and kills the sessions to switch them
+off. Without a Studio Display, it automatically uses only the built-in camera.
+Agent lifecycle hooks do the rest.
 
 ## Install
 
@@ -34,7 +36,7 @@ git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
 ./install.sh                    # builds to ~/.local/bin
 ~/.local/bin/thinklight blink 3 # first run triggers the camera permission prompt
-~/.local/bin/thinklight check   # FaceTime HD Camera should report RUNNING
+~/.local/bin/thinklight check   # built-in and Studio Display cameras should report RUNNING
 ```
 
 To upgrade later: `git pull && ./install.sh`. The hooks run the copy
@@ -51,7 +53,7 @@ thinklight off [--force]   deregister this session; the LED goes off when the
                            typed at a terminal: clear all sessions, off now)
 thinklight status          on | off
 thinklight blink [secs]    on, wait, off
-thinklight pulse [times]   blink slowly n times (default 3), then stay on
+thinklight pulse [times]   alternate both LEDs n times (default 3; blink one), then stay on
 thinklight check           hardware-level truth via CoreMediaIO
 ```
 
@@ -95,11 +97,11 @@ light is meaningful in interactive sessions only.
 
 ## How it works
 
-`thinklight-daemon` is ~60 lines of Swift: an `AVCaptureSession` on the
-built-in camera (`.builtInWideAngleCamera` only — it will never grab your
-Studio Display or Continuity iPhone camera) with an
+`thinklight-daemon` opens a separate `AVCaptureSession` for the Mac's built-in
+camera and the Apple Studio Display camera, each with an
 `AVCaptureVideoDataOutput` that discards every frame — a session needs an
-output before it actually starts capturing and lights the LED.
+output before it actually starts capturing and lights the LED. Other external
+cameras and Continuity Camera iPhones are excluded.
 `thinklight check` reads `kCMIODevicePropertyDeviceIsRunningSomewhere` via
 CoreMediaIO to confirm the hardware state of the light.
 
@@ -122,8 +124,9 @@ this project is built on.
 sessions all share one LED: each session registers a token under
 `~/.local/state/thinklight` when a prompt starts and removes it when the
 turn ends, and the light goes dark only when the **last** session finishes.
-When one session stops while others are still working, the light pulses
-slowly three times and then stays on — a glanceable "one of them is done".
+When one session stops while others are still working, the Mac and Studio
+Display LEDs alternate three times before both stay on again (or the one
+available LED blinks) — a glanceable "one of them is done".
 Tokens are verified against live processes on every call, so a crashed
 session can never leave the LED stuck on; and a plain `thinklight off`
 typed by a human always wins immediately.
@@ -132,14 +135,14 @@ typed by a human always wins immediately.
 
 ## Roadmap
 
-ThinkLight's core idea is `agent state → a physical light`. The built-in
-camera LED is the first backend; planned/possible backends include:
+ThinkLight's core idea is `agent state → physical lights`. The built-in and
+Studio Display camera LEDs are the first backend; planned/possible backends
+include:
 
 - **Keyboard backlight** — pulse or toggle the MacBook keyboard backlight
   (CoreBrightness) as a subtler, silent indicator
-- **External camera LEDs** — same capture-session trick on UVC webcams and
-  the Studio Display camera (select a backend per display setup, e.g.
-  clamshell mode where the built-in LED is hidden)
+- **Other external camera LEDs** — extend the same capture-session trick to
+  third-party UVC webcams, with backend selection per setup
 - **Display-based indicators** — brightness pulse or a screen-edge glow for
   setups with no controllable LED at all
 - **Multi-state signaling** — blink patterns for "waiting for approval"
