@@ -3,7 +3,7 @@
 # Use the Mac camera LED as a silent, glanceable "AI agent is working" indicator.
 #
 # Multi-session refcounting, self-healing by design: each session's `on` drops
-# a token file named by its hook session_id (or parent PID) under
+# a token file named by its hook session_id (or agent-host PID) under
 # ~/.local/state/thinklight; `off` removes that session's token and kills the
 # daemon only when no tokens remain, so the light stays on until every
 # concurrent agent session has stopped. When one session stops while others
@@ -14,15 +14,78 @@
 # exact, so an editor or pager open on that path is never mistaken for it)
 # remains the single source of truth for the LED.
 DAEMON="$HOME/.local/bin/thinklight-daemon"
-SESSIONS="$HOME/.local/state/thinklight/sessions"
+STATE="$HOME/.local/state/thinklight"
+SESSIONS="$STATE/sessions"
+STATE_LOCK="$STATE/state.lock"
+PULSE_LOCK="$STATE/pulse.lock"
 mkdir -p "$SESSIONS"
+
+STATE_LOCK_HELD=0
+PULSE_LOCK_HELD=0
+
+cleanup() {
+  if [[ "$STATE_LOCK_HELD" == 1 && "$(cat "$STATE_LOCK" 2>/dev/null)" == "$$" ]]; then
+    rm -f "$STATE_LOCK"
+  fi
+  if [[ "$PULSE_LOCK_HELD" == 1 && "$(cat "$PULSE_LOCK" 2>/dev/null)" == "$$" ]]; then
+    rm -f "$PULSE_LOCK"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+acquire_state_lock() {
+  local tries=0
+  while ! /usr/bin/shlock -f "$STATE_LOCK" -p $$; do
+    tries=$((tries + 1))
+    [[ "$tries" -lt 100 ]] || return 1
+    sleep 0.02
+  done
+  STATE_LOCK_HELD=1
+}
+
+release_state_lock() {
+  if [[ "$STATE_LOCK_HELD" == 1 && "$(cat "$STATE_LOCK" 2>/dev/null)" == "$$" ]]; then
+    rm -f "$STATE_LOCK"
+  fi
+  STATE_LOCK_HELD=0
+}
+
+lock_or_die() {
+  acquire_state_lock && return 0
+  echo "thinklight: timed out waiting for state lock" >&2
+  exit 75
+}
 
 # Hooks pipe a JSON payload on stdin; its session_id names the token so this
 # session's on and off pair up even across apps with different environments.
-# Manual runs (or payloads without one) fall back to the parent process's PID.
+# Manual runs (or payloads without one) fall back to the owning process's PID.
 KEY=""
 [[ -t 0 ]] || KEY=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-KEY=${KEY:-ppid-$PPID}
+
+# A bare hook command is normally exec'd directly, making PPID the long-lived
+# Claude/Codex process. If a shell or launcher remains in between, walk upward
+# and bind the token to the first agent host instead of that short-lived wrapper.
+owner_pid() {
+  local pid=$PPID parent command steps=0
+  while [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 && "$steps" -lt 12 ]]; do
+    command=$(ps -o comm= -p "$pid" 2>/dev/null)
+    case "${command##*/}" in
+      claude|codex) echo "$pid"; return 0 ;;
+    esac
+    parent=$(ps -o ppid= -p "$pid" 2>/dev/null)
+    parent=${parent//[[:space:]]/}
+    [[ "$parent" =~ ^[0-9]+$ ]] || break
+    pid=$parent
+    steps=$((steps + 1))
+  done
+  echo "$PPID"
+}
+
+OWNER_PID=$(owner_pid)
+[[ "$KEY" =~ ^[A-Za-z0-9._-]+$ && "$KEY" != "." && "$KEY" != ".." ]] || KEY="ppid-$OWNER_PID"
 
 sweep() {
   local f pid
@@ -33,46 +96,88 @@ sweep() {
   done
 }
 
+has_sessions() {
+  local f
+  for f in "$SESSIONS"/*; do
+    [[ -e "$f" ]] && return 0
+  done
+  return 1
+}
+
 start_daemon() {
   pgrep -qfx "$DAEMON" && return 0
   nohup "$DAEMON" >/dev/null 2>&1 &
 }
 
+stop_daemon() {
+  local tries=0
+  pkill -fx "$DAEMON" 2>/dev/null || return 0
+  while pgrep -qfx "$DAEMON"; do
+    tries=$((tries + 1))
+    [[ "$tries" -lt 20 ]] || return 0
+    sleep 0.05
+  done
+}
+
 case "${1:-status}" in
   on)
+    lock_or_die
     sweep
-    echo "$PPID" > "$SESSIONS/$KEY"
+    echo "$OWNER_PID" > "$SESSIONS/$KEY"
     start_daemon
+    release_state_lock
     ;;
   off)
     # A human typing `off` at a terminal means "light off, now" — honor it even
     # if agent sessions are still registered. Hooks (stdin is a pipe) refcount.
+    lock_or_die
     if [[ "${2:-}" == "--force" || -t 0 ]]; then
       rm -f "$SESSIONS"/*
     else
       rm -f "$SESSIONS/$KEY"
       sweep
     fi
-    if [[ -z "$(ls -A "$SESSIONS")" ]]; then
-      pkill -fx "$DAEMON" 2>/dev/null
+    if ! has_sessions; then
+      stop_daemon
+      release_state_lock
     else
+      release_state_lock
       # Other sessions still working: signal "one finished" with a slow triple
       # pulse, detached so the hook returns well inside its timeout.
-      nohup "$0" pulse >/dev/null 2>&1 &
+      nohup "$0" pulse </dev/null >/dev/null 2>&1 &
     fi
     exit 0
     ;;
   pulse)
     # Blink slowly n times, then leave the light on — unless every session
     # stopped mid-pulse, in which case stay dark rather than resurrect the LED.
-    # Measured LED-on latency after daemon start is ~0.4s; these keep the
-    # blink brisk (~1.3s per cycle) while the lit phase stays clearly visible.
+    # Use an even, unhurried cadence: one second dark, one second lit. Only one
+    # pulse sequence may run at a time; state transitions remain independently
+    # locked so a final `off` can interrupt it without the LED being resurrected.
+    /usr/bin/shlock -f "$PULSE_LOCK" -p $$ || exit 0
+    PULSE_LOCK_HELD=1
     for _ in $(seq 1 "${2:-3}"); do
-      pkill -fx "$DAEMON" 2>/dev/null
-      sleep 0.4
-      [[ -n "$(ls -A "$SESSIONS")" ]] || exit 0
+      lock_or_die
+      sweep
+      if ! has_sessions; then
+        stop_daemon
+        release_state_lock
+        exit 0
+      fi
+      stop_daemon
+      release_state_lock
+      sleep 1
+
+      lock_or_die
+      sweep
+      if ! has_sessions; then
+        stop_daemon
+        release_state_lock
+        exit 0
+      fi
       start_daemon
-      sleep 0.9
+      release_state_lock
+      sleep 1
     done
     ;;
   blink)
