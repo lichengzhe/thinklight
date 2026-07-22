@@ -1,58 +1,71 @@
 # ThinkLight 🟢
 
-**The Mac camera LED, repurposed as your AI-agent status light.**
+**Know when your AI agent needs you without switching back to the terminal.**
 
-**Steady**: agents are working — go do something else. **Blinking**: a session
-is waiting on you. **Off**: everything's done.
+ThinkLight turns the green LED beside your Mac's built-in camera into a status
+light for Claude Code and Codex CLI:
+
+| Light | Meaning |
+| --- | --- |
+| Steady | An agent is running |
+| Blinking | A session is waiting for your input |
+| Off | There are no active sessions |
 
 [中文](README.md)
 
-## Why
+## When it is useful
 
-Agents run for minutes. You switch away, then keep switching back to check.
-ThinkLight puts the answer in your peripheral vision: no popups, no sounds,
-no terminal to watch — one glance tells you whether to return.
+When an agent task runs for several minutes, you will often move to an editor,
+browser, or another workspace. ThinkLight lets you see its status in your
+peripheral vision without repeatedly checking the terminal or adding popups,
+sounds, or another window. Because the indicator sits outside the screen, it
+remains visible when you change desktops or enter full screen.
 
-The camera LED is the perfect vehicle: eye-level, visible across the room,
-and wired to the capture hardware — macOS offers no API to fake it. It is lit
-if and only if the camera is really capturing. **A lit LED cannot lie.**
+It is particularly useful if you:
+
+- regularly give Claude Code or Codex long-running tasks;
+- keep several agent sessions open at once;
+- want to know when to return without interrupting your current work.
+
+With multiple sessions, the LED blinks as soon as any session needs attention.
+It stays steady while all active sessions are running and turns off after every
+session exits.
 
 ## Install
 
-Requires macOS with Xcode Command Line Tools (`swiftc`).
+You need a Mac with a built-in camera and Xcode Command Line Tools (`swiftc`).
+
+Install ThinkLight first:
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
-./install.sh                    # builds to ~/.local/bin
-~/.local/bin/thinklight blink 3 # first run asks camera permission, lights up 3s
+./install.sh
 ```
 
-ThinkLight notifies you when an update lands (one background check per 24h,
-never auto-installs); `thinklight update` upgrades in one step.
+This builds and installs the programs in `~/.local/bin`. On the first test,
+macOS asks for camera access; after permission is granted, the LED stays on for
+three seconds:
 
-## Usage
-
-```
-thinklight on              mark this session "working"
-thinklight off [--force]   turn ended: mark "waiting for you"; session gone: drop it
-                           (plain `off` at a terminal / --force: clear all, off now)
-thinklight status          on | blink | off
-thinklight blink [secs]    on, wait, off
-thinklight check           hardware-level truth via CoreMediaIO
-thinklight update [--check] update / check for updates
+```bash
+~/.local/bin/thinklight blink 3
 ```
 
-## Claude Code
+Next, configure hooks for the agent you use. After that, the light follows your
+sessions automatically; there is normally no need to run `thinklight on` or
+`thinklight off` yourself.
 
-One-line plugin install (this repo is its own marketplace):
+### Claude Code
 
-```
+This repository also provides a Claude Code plugin marketplace:
+
+```text
 /plugin marketplace add lichengzhe/thinklight
 /plugin install thinklight@thinklight
 ```
 
-Or merge into `~/.claude/settings.json` by hand:
+If you prefer not to use the plugin, merge these hooks into
+`~/.claude/settings.json`:
 
 ```json
 "hooks": {
@@ -77,13 +90,13 @@ Or merge into `~/.claude/settings.json` by hand:
 }
 ```
 
-Strict semantics: **steady = working; blinking = a session awaits you** — turn
-finished (`Stop`), API failed (`StopFailure`), or stuck at a permission prompt
-(`Notification`); **off = no sessions left at all**.
+ThinkLight starts blinking when a turn ends (`Stop`), the API fails
+(`StopFailure`), or a permission prompt needs confirmation (`Notification`). It
+returns to a steady light when you submit the next message.
 
-## Codex CLI
+### Codex CLI
 
-Codex (≥ 0.145) uses the same hook format, wired via the plugin:
+Codex CLI 0.145 and later can configure the same hooks through the plugin:
 
 ```bash
 codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
@@ -91,23 +104,51 @@ codex plugin add thinklight@thinklight
 codex   # confirm the hook trust prompt in an interactive session
 ```
 
+## Command line
+
+You normally do not need these commands after installing the hooks, but they
+are useful for testing, troubleshooting, or integrating another tool:
+
+```text
+thinklight on               mark the current session as running
+thinklight off [--force]    mark the turn as waiting; remove it when the session exits
+                            at a terminal or with --force: clear state and turn off now
+thinklight status           print on, blink, or off
+thinklight blink [seconds]  turn on for the specified time, then turn off
+thinklight check            read the camera hardware state reported by CoreMediaIO
+thinklight update --check   check for a new version
+thinklight update           update ThinkLight
+```
+
+ThinkLight checks for a new version in the background at most once every 24
+hours and sends a macOS notification when one is available. The check contacts
+this repository; installing an update requires running `thinklight update`.
+
+## Privacy, resources, and compatibility
+
+- **Camera frames:** ThinkLight needs camera permission to activate the hardware
+  LED. It discards every captured frame in the callback, without image
+  processing or disk storage.
+- **Resource use:** Capture uses the low-resolution preset, with no encoding or
+  video storage.
+- **Video calls:** macOS allows multiple processes to share a camera, and
+  ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
+  app is using the camera, however, the LED remains on, so it cannot display
+  ThinkLight's three states on its own.
+- **Camera selection:** ThinkLight uses only the Mac's built-in camera, not a
+  Studio Display, Continuity Camera, or another external camera.
+- **Unexpected exits:** ThinkLight checks each session's owner process once per
+  second and removes state for processes that have exited. Claude Code currently
+  has no hook for an Esc interrupt, so the LED may remain steady temporarily;
+  it recovers when the turn ends, or you can run `thinklight off`.
+
 ## How it works
 
-A Swift daemon opens one frame-discarding `AVCaptureSession` on the built-in
-camera — the LED is lit exactly while the session captures. Every second the
-daemon reconciles per-session tokens (sweeping any whose host process died):
-someone waiting → blink 2s lit / 2s dark; nobody left → light off, exit.
-Multiple sessions, crashes, power loss — the LED always reflects reality.
-Built-in camera only, so macOS never draws the external-camera green icon
-in your menu bar.
-
-## FAQ
-
-**Video calls?** Unaffected — macOS shares the camera across processes; Zoom
-and friends work normally. **Privacy?** Every frame is discarded in the
-callback, never read or stored. **Power?** Lowest preset, no encoding, no
-I/O — negligible. **Light still on after Esc?** Claude Code has no interrupt
-hook; it recovers when the turn ends, or run `thinklight off`.
+The ThinkLight Swift daemon starts an `AVCaptureSession` on the built-in camera.
+macOS turns on the hardware-linked green indicator while the camera is actually
+capturing and turns it off when capture stops. The daemon reads the state written
+by each agent session, switches among steady, blinking, and off, and exits when
+no sessions remain.
 
 ## License
 
