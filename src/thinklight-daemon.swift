@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 // ThinkLight daemon: hold the Mac's built-in camera so its LED becomes a
-// status light. Twice a second it reads the session tokens (each file is
+// status light. Once a second it reads the session tokens (each file is
 // "<pid> <run|idle>") and drives one of three states:
 //
 //   any live session idle (waiting on you)  -> blink, 2s lit / 2s dark
@@ -114,8 +114,8 @@ while true {
         setLit(true)
         tick = 0
     case .blink:
-        setLit(tick % 8 < 4)
+        setLit(tick % 4 < 2)
         tick += 1
     }
-    Thread.sleep(forTimeInterval: 0.5)
+    Thread.sleep(forTimeInterval: 1)
 }
