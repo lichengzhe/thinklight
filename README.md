@@ -26,7 +26,7 @@ kills the session to switch it off. Agent lifecycle hooks do the rest.
 Requires macOS with Xcode Command Line Tools (`swiftc`).
 
 ```bash
-git clone https://github.com/leecz/thinklight.git
+git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
 ./install.sh                    # builds to ~/.local/bin
 ~/.local/bin/thinklight blink 3 # first run triggers the camera permission prompt
@@ -64,7 +64,7 @@ Add to `~/.claude/settings.json` (merge with existing settings):
 Or install as a plugin — this repo is also a plugin marketplace:
 
 ```
-/plugin marketplace add leecz/thinklight
+/plugin marketplace add lichengzhe/thinklight
 /plugin install thinklight@thinklight
 ```
 
@@ -73,7 +73,7 @@ Or install as a plugin — this repo is also a plugin marketplace:
 Codex (≥ 0.145) uses the same hooks format, loaded via plugins:
 
 ```bash
-codex plugin marketplace add https://github.com/leecz/thinklight.git
+codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
 codex plugin add thinklight@thinklight
 codex   # accept the hook trust prompt in the interactive session
 ```

@@ -21,7 +21,7 @@ ThinkLight 打开一个最小化的内建摄像头采集会话（最低分辨率
 需要 macOS + Xcode Command Line Tools（`swiftc`）。
 
 ```bash
-git clone https://github.com/leecz/thinklight.git
+git clone https://github.com/lichengzhe/thinklight.git
 cd thinklight
 ./install.sh                    # 编译安装到 ~/.local/bin
 ~/.local/bin/thinklight blink 3 # 首次运行会弹摄像头授权框
@@ -59,7 +59,7 @@ thinklight check           经 CoreMediaIO 读硬件层真实状态
 也可以走插件（本仓库本身就是一个 plugin marketplace）：
 
 ```
-/plugin marketplace add leecz/thinklight
+/plugin marketplace add lichengzhe/thinklight
 /plugin install thinklight@thinklight
 ```
 
@@ -68,7 +68,7 @@ thinklight check           经 CoreMediaIO 读硬件层真实状态
 Codex（≥ 0.145）hooks 格式与 Claude Code 相同，经插件挂入：
 
 ```bash
-codex plugin marketplace add https://github.com/leecz/thinklight.git
+codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
 codex plugin add thinklight@thinklight
 codex   # 在交互会话里确认 hook 信任提示
 ```
