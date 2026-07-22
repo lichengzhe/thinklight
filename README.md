@@ -1,21 +1,25 @@
 # ThinkLight 💡
 
-**Turn your Mac's camera LED into an unfakeable "AI agent is working" status light.**
+**A silent, glanceable status light for AI agents — powered by your Mac's
+camera LED.**
 
-Green light on → your agent (Claude Code, Codex, …) is thinking.
-Light off → it's your turn.
+Green light on → your agent (Claude Code, Codex, …) is still working.
+Light off → it's done. Your turn.
 
 [中文文档](README.zh-CN.md)
 
-## Why the camera LED?
+## Why?
 
-The green LED next to your Mac's camera is wired to the camera sensor's power
-at the hardware level. macOS provides no API to control the LED directly —
-it is on if and only if the camera is actually capturing. That privacy
-guarantee cuts both ways: it also makes the LED the one status indicator on
-your machine that **no software can fake**. No menu-bar widget to hunt for,
-no terminal to glance at — a physical light at eye level, visible from across
-the room.
+Agents run long. You switch to other work — and then keep interrupting
+yourself to check whether they're finished. ThinkLight moves that answer
+into your peripheral vision: no notification to dismiss, no sound, no window
+to keep visible. One glance. Light on: keep doing what you're doing.
+Light off: the run is over.
+
+The camera LED happens to be perfect for this. It sits at eye level, visible
+from across the room, and it's wired to the camera sensor's power at the
+hardware level — macOS provides no API to control it directly; it is on if
+and only if the camera is actually capturing.
 
 ThinkLight opens a minimal capture session on the built-in camera (lowest
 preset, every frame discarded, nothing stored) to switch the LED on, and
@@ -132,6 +136,9 @@ camera LED is the first backend; planned/possible backends include:
   (`Notification` hook) vs steady-on for "working"
 - **Per-session refcounting** — accurate indication with multiple concurrent
   agent sessions
+- **Windows support** — most laptop webcam LEDs are likewise hardwired to
+  capture; the same hold-the-camera trick should port via Media Foundation,
+  with vendor keyboard-backlight SDKs as further backends
 
 Contributions welcome.
 
