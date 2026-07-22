@@ -85,17 +85,14 @@ codex   # 在交互会话里确认 hook 信任提示
 
 注意：`codex exec` 非交互模式不触发 `UserPromptSubmit`，灯只在交互会话里有意义。
 
-## 原理与踩坑
+## 原理
 
 `thinklight-daemon` 约 60 行 Swift：在内建摄像头（只匹配
 `.builtInWideAngleCamera`，绝不会误开 Studio Display 或 iPhone 连续互通
-相机）上开一个 `AVCaptureSession`，delegate 丢弃所有帧。
-
-不显然的坑：**只有输入没有输出的会话不会真正启动采集**——
-`session.isRunning` 返回 `true` 但摄像头是黑的、灯不亮。必须挂一个
-`AVCaptureVideoDataOutput`，哪怕它把每一帧都扔掉。`thinklight check`
-通过 CoreMediaIO 读 `kCMIODevicePropertyDeviceIsRunningSomewhere`，
-用硬件层状态做断言，不要信 API，也不要只靠肉眼。
+相机）上开一个 `AVCaptureSession`，挂一个把每一帧都直接丢弃的
+`AVCaptureVideoDataOutput`——会话要有输出才会真正启动采集、点亮 LED。
+`thinklight check` 通过 CoreMediaIO 读
+`kCMIODevicePropertyDeviceIsRunningSomewhere`，从硬件层确认灯的真实状态。
 
 ## FAQ
 

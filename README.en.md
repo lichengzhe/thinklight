@@ -93,19 +93,15 @@ codex   # accept the hook trust prompt in the interactive session
 Note: `codex exec` (non-interactive) does not fire `UserPromptSubmit`, so the
 light is meaningful in interactive sessions only.
 
-## How it works — and the pitfall
+## How it works
 
 `thinklight-daemon` is ~60 lines of Swift: an `AVCaptureSession` on the
 built-in camera (`.builtInWideAngleCamera` only — it will never grab your
-Studio Display or Continuity iPhone camera) with a delegate that discards
-every frame.
-
-The non-obvious part: **a session with an input but no output never actually
-starts capturing** — `session.isRunning` reports `true` while the camera
-stays dark. You must attach an `AVCaptureVideoDataOutput`, even one that
-throws every frame away. `thinklight check` reads
-`kCMIODevicePropertyDeviceIsRunningSomewhere` via CoreMediaIO so you can
-assert the hardware state instead of trusting the API or your eyes.
+Studio Display or Continuity iPhone camera) with an
+`AVCaptureVideoDataOutput` that discards every frame — a session needs an
+output before it actually starts capturing and lights the LED.
+`thinklight check` reads `kCMIODevicePropertyDeviceIsRunningSomewhere` via
+CoreMediaIO to confirm the hardware state of the light.
 
 ## FAQ
 
