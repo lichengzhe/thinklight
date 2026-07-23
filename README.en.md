@@ -22,8 +22,9 @@ baton is back is to keep switching to the terminal to check.
 ThinkLight puts that signal in your peripheral vision. While the light is on,
 the AI is still busy — stay focused on your own work. When it goes out, it is
 your turn: review the result, give feedback, hand off the next task. No
-popups, no sounds, no extra window, and it stays visible across desktops and
-full screen.
+popups, no sounds — and unlike desktop pets and status widgets, it costs zero
+screen real estate: the light sits outside your screen, visible across
+desktops and full screen.
 
 It is particularly useful if you:
 
