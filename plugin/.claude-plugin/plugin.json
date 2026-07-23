@@ -1,6 +1,6 @@
 {
   "name": "thinklight",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Turn the Mac camera LED into an AI busy light: on while the agent works, off when it's done and it's your turn. Requires ~/.local/bin/thinklight (run install.sh from the repo first).",
   "author": {
     "name": "lichengzhe",
