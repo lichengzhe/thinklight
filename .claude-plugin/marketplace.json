@@ -3,6 +3,7 @@
   "owner": {
     "name": "lichengzhe"
   },
+  "description": "Camera LED busy-light hooks for Claude Code and Codex",
   "plugins": [
     {
       "name": "thinklight",

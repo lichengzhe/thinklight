@@ -22,6 +22,17 @@
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/thinklight off",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

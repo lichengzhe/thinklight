@@ -4,12 +4,15 @@ import Foundation
 // ThinkLight daemon: hold the Mac's built-in camera so its LED becomes a
 // status light. Once a second it reads the session tokens (each file starts
 // with the owner pid): any live session running -> LED on; none -> LED off,
-// exit.
+// then wait for the next session.
 //
 // Tokens whose recorded process has exited are deleted here, so a crashed
 // session can never leave the LED stuck on.
-let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent(".local/state/thinklight/sessions")
+let stateDir = ProcessInfo.processInfo.environment["THINKLIGHT_STATE_DIR"].map {
+    URL(fileURLWithPath: $0, isDirectory: true)
+} ?? FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".local/state/thinklight", isDirectory: true)
+let sessionsDir = stateDir.appendingPathComponent("sessions", isDirectory: true)
 
 let discovery = AVCaptureDevice.DiscoverySession(
     deviceTypes: [.builtInWideAngleCamera],
@@ -28,7 +31,7 @@ guard let device = discovery.devices.first(where: {
 }
 
 let sema = DispatchSemaphore(value: 0)
-var granted = false
+nonisolated(unsafe) var granted = false
 AVCaptureDevice.requestAccess(for: .video) { ok in
     granted = ok
     sema.signal()
@@ -89,23 +92,17 @@ func anySessionRunning() -> Bool {
     return anyRun
 }
 
-var lit = false
-func setLit(_ on: Bool) {
-    guard on != lit else { return }
-    if on { session.startRunning() } else { session.stopRunning() }
-    lit = on
-}
-
 FileHandle.standardOutput.write(
     "thinklight: watching sessions, LED via \(device.localizedName), pid \(ProcessInfo.processInfo.processIdentifier)\n"
         .data(using: .utf8)!
 )
 
+var lit = false
 while true {
-    guard anySessionRunning() else {
-        setLit(false)
-        exit(0)
+    let shouldLight = anySessionRunning()
+    if shouldLight != lit {
+        if shouldLight { session.startRunning() } else { session.stopRunning() }
+        lit = shouldLight
     }
-    setLit(true)
     Thread.sleep(forTimeInterval: 1)
 }
