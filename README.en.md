@@ -13,6 +13,8 @@ status of Claude Code and Codex CLI:
 
 [中文](README.md)
 
+> **Fastest setup:** [Paste one prompt and let Claude Code or Codex install and configure it.](#let-ai-install-it-recommended)
+
 ## Why it helps
 
 Working with an agent is a relay: you hand off a task and the baton is with
@@ -37,6 +39,26 @@ With multiple sessions, the light stays on while any of them is still working,
 and goes out once they have all finished.
 
 ## Install
+
+### Let AI install it (recommended)
+
+Paste this into Claude Code, Codex, or another coding agent that is **running
+on this Mac and can use its terminal**:
+
+```text
+Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
+First read README.en.md and install.sh to confirm the installation scope. Then clone or update
+the repository, run install.sh, configure the ThinkLight hooks for Claude Code and/or Codex CLI
+already installed on this Mac, and verify the result with ~/.local/bin/thinklight blink 3 and
+~/.local/bin/thinklight check. Stop and tell me exactly what to click when macOS asks for camera
+access or Codex asks me to trust the hooks. When finished, report the install location, hook
+configuration, and verification results. Do not change unrelated settings.
+```
+
+The agent can handle downloading, compiling, and hook configuration. You still
+need to personally approve macOS camera access and Codex hook trust.
+
+### Manual install
 
 You need a Mac with a built-in camera and Xcode Command Line Tools (`swiftc`).
 
@@ -79,14 +101,17 @@ If you prefer not to use the plugin, merge these hooks into
   ],
   "Stop": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
+  ],
+  "StopFailure": [
+    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
   ]
 }
 ```
 
 The light turns on when you submit a message (`UserPromptSubmit`) and turns off
-when the turn ends (`Stop`). If a session exits or crashes, the daemon clears
-its state within a second. A pending permission prompt counts as running, so
-the light stays on.
+when the turn ends normally (`Stop`) or an API request fails (`StopFailure`).
+If a session exits or crashes, the daemon clears its state within a second. A
+pending permission prompt counts as running, so the light stays on.
 
 ### Codex CLI
 
@@ -124,7 +149,8 @@ this repository; installing an update requires running `thinklight update`.
   LED. It discards every captured frame in the callback, without image
   processing or disk storage.
 - **Resource use:** Capture uses the low-resolution preset, with no encoding or
-  video storage.
+  video storage. The daemon waits for the next session while idle, but camera
+  capture is fully stopped.
 - **Video calls:** macOS allows multiple processes to share a camera, and
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
   app is using the camera, however, the LED remains on, so it cannot reflect
@@ -142,7 +168,9 @@ The ThinkLight Swift daemon starts an `AVCaptureSession` on the built-in camera.
 macOS turns on the hardware-linked green indicator while the camera is actually
 capturing and turns it off when capture stops. Once a second the daemon checks
 the sessions registered by each agent: while any is still running it keeps
-capturing (light on); when none remain it stops and exits (light off).
+capturing (light on); when none remain it stops capture and waits for the next
+session (light off). Keeping the idle daemon resident avoids losing a new start
+signal while an old process is exiting.
 
 ## License
 

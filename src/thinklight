@@ -1,29 +1,30 @@
 #!/bin/bash
 # thinklight on|off [--force]|status|blink [seconds]|check|update [--check]
 # One light, two states: on = an agent is running, off = nothing running.
-# The daemon owns the LED; this CLI only records per-session tokens and keeps
-# the daemon alive.
-DAEMON="$HOME/.local/bin/thinklight-daemon"
+# The daemon owns the LED; this CLI only records per-session tokens and makes
+# sure the daemon is available.
+BIN_DIR="${THINKLIGHT_BIN_DIR:-$HOME/.local/bin}"
+DAEMON="$BIN_DIR/thinklight-daemon"
 # pgrep/pkill -f patterns are regexes; escape the path so `.` and friends
 # match literally wherever this ends up installed.
 DAEMON_RE=$(printf '%s' "$DAEMON" | sed 's/[][*^$+?(){}|\\.]/\\&/g')
-STATE="$HOME/.local/state/thinklight"
+STATE="${THINKLIGHT_STATE_DIR:-$HOME/.local/state/thinklight}"
 SESSIONS="$STATE/sessions"
 SPAWN_LOCK="$STATE/spawn.lock"
 SOURCE_FILE="$STATE/source"
 REVISION_FILE="$STATE/revision"
 UPDATE_CHECK_FILE="$STATE/update-check"
 REPO_URL="https://github.com/lichengzhe/thinklight.git"
-mkdir -p "$SESSIONS"
 
 # Hooks pipe a JSON payload on stdin: session_id names the token so a
 # session's on/off pair up even across apps with different environments.
 PAYLOAD=""
-[[ -t 0 ]] || PAYLOAD=$(cat)
+KEY=""
+OWNER_PID=""
+
 json_field() {
   printf '%s' "$PAYLOAD" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
 }
-KEY=$(json_field session_id)
 
 # A bare hook command is normally exec'd directly, making PPID the long-lived
 # Claude/Codex process. If a shell or launcher remains in between, walk upward
@@ -44,43 +45,106 @@ owner_pid() {
   echo "$PPID"
 }
 
-OWNER_PID=$(owner_pid)
-[[ "$KEY" =~ ^[A-Za-z0-9._-]+$ && "$KEY" != "." && "$KEY" != ".." ]] || KEY="ppid-$OWNER_PID"
+load_session_context() {
+  mkdir -p "$SESSIONS" || {
+    echo "thinklight: cannot create state directory: $SESSIONS" >&2
+    return 1
+  }
+  PAYLOAD=""
+  [[ -t 0 ]] || PAYLOAD=$(cat) || return 1
+  OWNER_PID=$(owner_pid)
+  KEY=$(json_field session_id)
+  [[ "$KEY" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || KEY="ppid-$OWNER_PID"
+}
 
 # Written via mktemp+mv so the daemon never reads a half-written token.
 write_token() {
   local tmp
   tmp=$(mktemp "$SESSIONS/.tok.XXXXXX") || return 1
-  printf '%s\n' "$OWNER_PID" > "$tmp"
-  mv -f "$tmp" "$SESSIONS/$KEY"
+  if ! printf '%s\n' "$OWNER_PID" > "$tmp" || ! mv -f "$tmp" "$SESSIONS/$KEY"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 daemon_running() {
   pgrep -qfx "$DAEMON_RE"
 }
 
+any_daemon_running() {
+  daemon_running \
+    || pgrep -qfx "$DAEMON_RE built-in" \
+    || pgrep -qfx "$DAEMON_RE studio" \
+    || pgrep -qfx "$DAEMON_RE both"
+}
+
 ensure_daemon() {
   daemon_running && return 0
+  [[ -x "$DAEMON" ]] || {
+    echo "thinklight: daemon is not installed: $DAEMON" >&2
+    return 1
+  }
+
   # shlock reaps locks whose recorded pid is dead, so a killed CLI cannot wedge this.
   local tries=0
   while ! /usr/bin/shlock -f "$SPAWN_LOCK" -p $$; do
     tries=$((tries + 1))
-    [[ "$tries" -lt 100 ]] || return 1
+    if [[ "$tries" -ge 100 ]]; then
+      echo "thinklight: timed out waiting to start the daemon" >&2
+      return 1
+    fi
     sleep 0.02
   done
+
   if ! daemon_running; then
-    nohup "$DAEMON" >/dev/null 2>&1 &
+    nohup "$DAEMON" </dev/null >/dev/null 2>&1 &
   fi
-  rm -f "$SPAWN_LOCK"
+  rm -f "$SPAWN_LOCK" || return 1
+
+  tries=0
+  while ! daemon_running; do
+    tries=$((tries + 1))
+    if [[ "$tries" -ge 100 ]]; then
+      echo "thinklight: daemon failed to start" >&2
+      return 1
+    fi
+    sleep 0.02
+  done
 }
 
 stop_daemons() {
-  pkill -fx "$DAEMON_RE" 2>/dev/null
-  # Daemon invocations from older multi-light versions took a backend argument
-  pkill -fx "$DAEMON_RE built-in" 2>/dev/null
-  pkill -fx "$DAEMON_RE studio" 2>/dev/null
-  pkill -fx "$DAEMON_RE both" 2>/dev/null
-  return 0
+  local tries=0
+  while any_daemon_running; do
+    pkill -fx "$DAEMON_RE" 2>/dev/null
+    # Daemon invocations from older multi-light versions took a backend argument.
+    pkill -fx "$DAEMON_RE built-in" 2>/dev/null
+    pkill -fx "$DAEMON_RE studio" 2>/dev/null
+    pkill -fx "$DAEMON_RE both" 2>/dev/null
+    tries=$((tries + 1))
+    if [[ "$tries" -ge 100 ]]; then
+      echo "thinklight: daemon did not stop" >&2
+      return 1
+    fi
+    sleep 0.02
+  done
+}
+
+has_sessions() {
+  local token
+  [[ -d "$SESSIONS" ]] || return 1
+  for token in "$SESSIONS"/*; do
+    [[ -f "$token" ]] && return 0
+  done
+  return 1
+}
+
+clear_sessions() {
+  local token
+  [[ -d "$SESSIONS" ]] || return 0
+  for token in "$SESSIONS"/* "$SESSIONS"/.tok.*; do
+    [[ -f "$token" ]] || continue
+    rm -f "$token" || return 1
+  done
 }
 
 remote_revision() {
@@ -129,27 +193,37 @@ perform_update() {
 
 case "${1:-status}" in
   on)
-    write_token
-    ensure_daemon
-    schedule_update_check
+    load_session_context || exit 1
+    if ! write_token; then
+      echo "thinklight: could not record the session" >&2
+      exit 1
+    fi
+    if ! ensure_daemon; then
+      rm -f "$SESSIONS/$KEY"
+      exit 1
+    fi
+    schedule_update_check || true
     ;;
   off)
     if [[ "${2:-}" == "--force" || -t 0 ]]; then
       # A human typing `off` at a terminal means "light off, now"
-      rm -f "$SESSIONS"/*
-      stop_daemons
+      clear_sessions || exit 1
+      stop_daemons || exit 1
     else
-      rm -f "$SESSIONS/$KEY"
+      load_session_context || exit 1
+      rm -f "$SESSIONS/$KEY" || exit 1
     fi
     ;;
   status)
-    if daemon_running; then echo on; else echo off; fi
+    if daemon_running && has_sessions; then echo on; else echo off; fi
     ;;
   blink)
-    "$0" on </dev/null; sleep "${2:-2}"; "$0" off </dev/null
+    "$0" on </dev/null || exit 1
+    sleep "${2:-2}" || exit 1
+    "$0" off </dev/null
     ;;
   check)
-    exec "$HOME/.local/bin/thinklight-check"
+    exec "$BIN_DIR/thinklight-check"
     ;;
   update)
     if [[ "${2:-}" == "--check" ]]; then check_update; else perform_update; fi
@@ -163,8 +237,9 @@ case "${1:-status}" in
     ;;
   _sync)
     # Internal upgrade hook: replace any older daemon, then let session tokens decide.
-    stop_daemons
-    if ls "$SESSIONS"/* >/dev/null 2>&1; then ensure_daemon; fi
+    mkdir -p "$SESSIONS" || exit 1
+    stop_daemons || exit 1
+    if has_sessions; then ensure_daemon; fi
     ;;
   *)
     echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|update [--check]" >&2
