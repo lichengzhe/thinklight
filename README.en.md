@@ -1,9 +1,10 @@
 # ThinkLight 🟢
 
-**One glance tells you whether the AI is still working or already done.**
+**The 🟢 above your MacBook screen, turned into an AI busy light. Zero screen
+space — switch apps, go full screen, and still know the moment the AI is done.**
 
-ThinkLight turns the green LED beside your Mac's built-in camera into a busy
-light for Claude Code and Codex CLI:
+ThinkLight uses the green LED beside the Mac's built-in camera to show the
+status of Claude Code and Codex CLI:
 
 | Light | Meaning |
 | --- | --- |

@@ -1,8 +1,9 @@
 # ThinkLight 🟢
 
-**抬眼一瞥，就知道 AI 是还在干活，还是已经干完。**
+**MacBook 屏幕上面的🟢，变成 AI 工作状态灯。不占屏幕空间，切应用、开全屏，
+随时知道 AI 干完了。**
 
-ThinkLight 把 Mac 内建摄像头旁的绿灯变成 Claude Code 和 Codex CLI 的忙碌指示灯：
+ThinkLight 用 Mac 内建摄像头旁的绿灯显示 Claude Code 和 Codex CLI 的状态：
 
 | 灯光 | 含义 |
 | --- | --- |
