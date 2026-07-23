@@ -139,6 +139,9 @@ ThinkLight 每 24 小时最多在后台检查一次新版，有更新时发送 m
   反映 ThinkLight 的状态。
 - **摄像头选择**：只使用 Mac 内建摄像头，不使用 Studio Display、连续互通相机或
   其他外接摄像头。
+- **指示灯归属**：daemon 通过 launchd 启动，macOS 会把摄像头使用记在
+  `thinklight-daemon` 自己名下。菜单栏只有控制中心图标上的小绿点，不会额外出现
+  归到终端头上的绿色摄像头胶囊图标（「Ghostty 正在使用摄像头」）。
 - **异常退出**：ThinkLight 每秒检查一次会话所属进程，并清理已经退出的会话状态。
   Claude Code 的 Esc 中断目前没有对应 hook，因此中断后灯可能暂时保持亮起；等下
   一个回合结束时会熄灭，也可以运行 `thinklight off`。

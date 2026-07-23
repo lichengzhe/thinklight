@@ -157,6 +157,10 @@ this repository; installing an update requires running `thinklight update`.
   ThinkLight's state on its own.
 - **Camera selection:** ThinkLight uses only the Mac's built-in camera, not a
   Studio Display, Continuity Camera, or another external camera.
+- **Indicator attribution:** The daemon is launched through launchd, so macOS
+  attributes the camera use to `thinklight-daemon` itself. Only the small green
+  dot on the Control Center icon appears — no extra green camera pill in the
+  menu bar blaming your terminal ("Ghostty is using the camera").
 - **Unexpected exits:** ThinkLight checks each session's owner process once per
   second and removes state for processes that have exited. Claude Code currently
   has no hook for an Esc interrupt, so the LED may remain on temporarily; it

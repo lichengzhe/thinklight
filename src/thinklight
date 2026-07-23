@@ -8,6 +8,9 @@ DAEMON="$BIN_DIR/thinklight-daemon"
 # pgrep/pkill -f patterns are regexes; escape the path so `.` and friends
 # match literally wherever this ends up installed.
 DAEMON_RE=$(printf '%s' "$DAEMON" | sed 's/[][*^$+?(){}|\\.]/\\&/g')
+# launchd job label for this install; hashing the daemon path keeps a test CLI
+# (THINKLIGHT_BIN_DIR override) away from the real install's job.
+DAEMON_LABEL="thinklight-$(printf '%s' "$DAEMON" | cksum | awk '{print $1}')"
 STATE="${THINKLIGHT_STATE_DIR:-$HOME/.local/state/thinklight}"
 SESSIONS="$STATE/sessions"
 SPAWN_LOCK="$STATE/spawn.lock"
@@ -97,7 +100,14 @@ ensure_daemon() {
   done
 
   if ! daemon_running; then
-    nohup "$DAEMON" </dev/null >/dev/null 2>&1 &
+    # Spawn through launchd so the daemon is its own TCC "responsible process".
+    # Spawned straight from a hook it would inherit the hosting terminal's
+    # responsibility, and macOS then blames the terminal for the camera with an
+    # extra green pill in the menu bar ("Ghostty is using the camera").
+    launchctl remove "$DAEMON_LABEL" 2>/dev/null
+    if ! launchctl submit -l "$DAEMON_LABEL" -- "$DAEMON" 2>/dev/null; then
+      nohup "$DAEMON" </dev/null >/dev/null 2>&1 &
+    fi
   fi
   rm -f "$SPAWN_LOCK" || return 1
 
@@ -114,7 +124,10 @@ ensure_daemon() {
 
 stop_daemons() {
   local tries=0
-  while any_daemon_running; do
+  # remove both terminates a launchd-managed daemon and drops its job label,
+  # which would otherwise outlive the process; pkill covers pre-launchd daemons.
+  while any_daemon_running || launchctl list "$DAEMON_LABEL" >/dev/null 2>&1; do
+    launchctl remove "$DAEMON_LABEL" 2>/dev/null
     pkill -fx "$DAEMON_RE" 2>/dev/null
     # Daemon invocations from older multi-light versions took a backend argument.
     pkill -fx "$DAEMON_RE built-in" 2>/dev/null
