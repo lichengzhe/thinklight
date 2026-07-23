@@ -44,7 +44,7 @@ install.sh，为这台 Mac 上已有的 Claude Code 和/或 Codex CLI 配置 Thi
 
 AI可以完成下载、编译和hook配置；macOS摄像头授权与Codex hook信任仍需要你亲自确认。
 
-### 手动安装
+### 源码安装
 
 需要一台带内建摄像头的Mac，以及Xcode Command Line Tools（`swiftc`）。
 
@@ -63,6 +63,19 @@ cd thinklight
 ```
 
 随后为你使用的AI Agent配置hooks。配置完成后，状态会随会话自动更新，日常不需要手动运行`thinklight on`或`thinklight off`。
+
+### 下载预编译版本
+
+不方便安装Xcode Command Line Tools时，也可以从[Releases](https://github.com/lichengzhe/thinklight/releases)下载预编译的通用二进制（Apple Silicon与Intel，要求macOS 14+）：
+
+```bash
+tar xzf thinklight-2.2.0-macos-universal.tar.gz
+cd thinklight-2.2.0
+xattr -d com.apple.quarantine thinklight thinklight-daemon thinklight-check
+install -m 755 thinklight thinklight-daemon thinklight-check ~/.local/bin/
+```
+
+预编译包做了ad-hoc签名但未经Apple公证，所以需要用`xattr`去掉下载隔离属性。之后同样运行`~/.local/bin/thinklight blink 3`授权摄像头，并按下文配置hooks。注意：`thinklight update`和后台更新检查依赖git checkout，预编译方式下不可用，推荐优先使用源码安装。
 
 ### Claude Code
 

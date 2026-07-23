@@ -58,7 +58,7 @@ configuration, and verification results. Do not change unrelated settings.
 The agent can handle downloading, compiling, and hook configuration. You still
 need to personally approve macOS camera access and Codex hook trust.
 
-### Manual install
+### Build from source
 
 You need a Mac with a built-in camera and Xcode Command Line Tools (`swiftc`).
 
@@ -81,6 +81,26 @@ three seconds:
 Next, configure hooks for the agent you use. After that, the light follows your
 sessions automatically; there is normally no need to run `thinklight on` or
 `thinklight off` yourself.
+
+### Download a prebuilt binary
+
+If installing the Xcode Command Line Tools is inconvenient, you can instead
+download the precompiled universal binaries (Apple Silicon and Intel, macOS
+14+) from [Releases](https://github.com/lichengzhe/thinklight/releases):
+
+```bash
+tar xzf thinklight-2.2.0-macos-universal.tar.gz
+cd thinklight-2.2.0
+xattr -d com.apple.quarantine thinklight thinklight-daemon thinklight-check
+install -m 755 thinklight thinklight-daemon thinklight-check ~/.local/bin/
+```
+
+The prebuilt binaries are ad-hoc signed but not notarized by Apple, hence the
+`xattr` step to clear the download quarantine. Then run
+`~/.local/bin/thinklight blink 3` to grant camera access as above, and
+configure hooks as described below. Note that `thinklight update` and the
+background update check rely on a git checkout and are unavailable with this
+method; building from source remains the recommended install.
 
 ### Claude Code
 
