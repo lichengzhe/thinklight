@@ -155,8 +155,10 @@ this repository; installing an update requires running `thinklight update`.
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
   app is using the camera, however, the LED remains on, so it cannot reflect
   ThinkLight's state on its own.
-- **Camera selection:** ThinkLight uses only the Mac's built-in camera, not a
-  Studio Display, Continuity Camera, or another external camera.
+- **Camera selection:** ThinkLight uses the Mac's built-in camera, and when a
+  Studio Display is connected its camera LED lights in sync — one 🟢 per
+  display (docking is re-checked each time the light turns on). Continuity
+  Camera and other external webcams are left alone.
 - **Indicator attribution:** The daemon is launched through launchd, so macOS
   attributes the camera use to `thinklight-daemon` itself. Only the small green
   dot on the Control Center icon appears — no extra green camera pill in the
@@ -168,7 +170,8 @@ this repository; installing an update requires running `thinklight update`.
 
 ## How it works
 
-The ThinkLight Swift daemon starts an `AVCaptureSession` on the built-in camera.
+The ThinkLight Swift daemon starts an `AVCaptureSession` on each status camera
+(the built-in one, plus a Studio Display's while docked).
 macOS turns on the hardware-linked green indicator while the camera is actually
 capturing and turns it off when capture stops. Once a second the daemon checks
 the sessions registered by each agent: while any is still running it keeps

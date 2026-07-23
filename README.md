@@ -137,8 +137,9 @@ ThinkLight 每 24 小时最多在后台检查一次新版，有更新时发送 m
 - **视频会议**：macOS 支持多个进程共享摄像头，ThinkLight 已测试可与 Zoom、
   腾讯会议同时运行。但其他应用正在使用摄像头时，绿灯会持续亮起，此时灯光无法
   反映 ThinkLight 的状态。
-- **摄像头选择**：只使用 Mac 内建摄像头，不使用 Studio Display、连续互通相机或
-  其他外接摄像头。
+- **摄像头选择**：使用 Mac 内建摄像头；接有 Studio Display 时，它的摄像头灯也会
+  同步亮灭，每台显示器一个 🟢（每次点亮时重新检测插拔）。连续互通相机和其他
+  外接摄像头不受影响。
 - **指示灯归属**：daemon 通过 launchd 启动，macOS 会把摄像头使用记在
   `thinklight-daemon` 自己名下。菜单栏只有控制中心图标上的小绿点，不会额外出现
   归到终端头上的绿色摄像头胶囊图标（「Ghostty 正在使用摄像头」）。
@@ -148,8 +149,9 @@ ThinkLight 每 24 小时最多在后台检查一次新版，有更新时发送 m
 
 ## 原理
 
-ThinkLight 的 Swift daemon 在内建摄像头上启动一个 `AVCaptureSession`。摄像头实际
-采集时，macOS 会点亮与硬件联动的绿色指示灯；停止采集时指示灯熄灭。daemon 每秒
+ThinkLight 的 Swift daemon 在每个状态摄像头（内建摄像头，接有 Studio Display 时
+加上它的摄像头）上各启动一个 `AVCaptureSession`。摄像头实际采集时，macOS 会点亮
+与硬件联动的绿色指示灯；停止采集时指示灯熄灭。daemon 每秒
 核对各个 agent 会话的状态：只要还有会话在运行就保持采集（灯亮），没有则停止
 采集并等待下一次会话（灯灭）。daemon 空闲常驻，避免会话刚开始时撞上旧进程退出
 而漏掉启动信号。
