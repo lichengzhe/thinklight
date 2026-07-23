@@ -49,10 +49,10 @@ on this Mac and can use its terminal**:
 
 ```text
 Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
-First read README.en.md and install.sh to confirm the installation scope. Then clone or update
-the repository, run install.sh, configure the ThinkLight hooks for Claude Code and/or Codex CLI
-already installed on this Mac, and verify the result with ~/.local/bin/thinklight blink 3 and
-~/.local/bin/thinklight check. Stop and tell me exactly what to click when macOS asks for camera
+First read README.en.md and get.sh to confirm the installation scope. Then run get.sh to install
+the prebuilt binaries (or clone the repository and run install.sh to build from source),
+configure the ThinkLight hooks for Claude Code and/or Codex CLI already installed on this Mac,
+and verify the result with ~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to click when macOS asks for camera
 access or Codex asks me to trust the hooks. When finished, report the install location, hook
 configuration, and verification results. Do not change unrelated settings.
 ```
@@ -60,30 +60,27 @@ configuration, and verification results. Do not change unrelated settings.
 The agent can handle downloading, compiling, and hook configuration. You still
 need to personally approve macOS camera access and Codex hook trust.
 
-### Download a prebuilt binary
-
-Download the precompiled universal binaries (Apple Silicon and Intel) from
-[Releases](https://github.com/lichengzhe/thinklight/releases), then unpack
-and install them into `~/.local/bin`:
+### One-line install
 
 ```bash
-tar xzf thinklight-2.2.0-macos-universal.tar.gz
-cd thinklight-2.2.0
-xattr -d com.apple.quarantine thinklight thinklight-daemon thinklight-check
-install -m 755 thinklight thinklight-daemon thinklight-check ~/.local/bin/
+curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
 ```
 
-The prebuilt binaries are ad-hoc signed but not notarized by Apple, hence the
-`xattr` step to clear the download quarantine. On the first test, macOS asks
-for camera access; after permission is granted, the LED stays on for three
-seconds:
+The script downloads the latest precompiled universal binaries (Apple Silicon
+and Intel) from
+[Releases](https://github.com/lichengzhe/thinklight/releases) and installs
+them into `~/.local/bin`. Then run the test command; macOS asks for camera
+access, and after permission is granted the LED stays on for three seconds:
 
 ```bash
 ~/.local/bin/thinklight blink 3
 ```
 
-With this method `thinklight update` and the background update check are
-unavailable; to update, download the new release again.
+To update, run the same install line again (`thinklight update` and update
+notifications are unavailable with this method). If you prefer not to pipe a
+script, download the tarball from Releases yourself, clear the download
+quarantine with `xattr -d com.apple.quarantine`, and place the three programs
+in `~/.local/bin`.
 
 ### Build from source
 
