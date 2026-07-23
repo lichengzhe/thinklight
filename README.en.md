@@ -70,27 +70,16 @@ If you prefer not to use the plugin, merge these hooks into
   "UserPromptSubmit": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight on", "timeout": 10 }] }
   ],
-  "PostToolUse": [
-    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight on", "timeout": 10 }] }
-  ],
-  "Notification": [
-    { "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
-  ],
   "Stop": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
-  ],
-  "StopFailure": [
-    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
-  ],
-  "SessionEnd": [
-    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 3 }] }
   ]
 }
 ```
 
-The light turns off when a turn ends (`Stop`), the API fails (`StopFailure`),
-or a permission prompt needs confirmation (`Notification`). It turns back on
-when you submit the next message or approve the permission prompt.
+The light turns on when you submit a message (`UserPromptSubmit`) and turns off
+when the turn ends (`Stop`). If a session exits or crashes, the daemon clears
+its state within a second. A pending permission prompt counts as running, so
+the light stays on.
 
 ### Codex CLI
 
@@ -138,7 +127,7 @@ this repository; installing an update requires running `thinklight update`.
 - **Unexpected exits:** ThinkLight checks each session's owner process once per
   second and removes state for processes that have exited. Claude Code currently
   has no hook for an Esc interrupt, so the LED may remain on temporarily; it
-  turns off when the turn ends, or you can run `thinklight off`.
+  turns off when the next turn ends, or you can run `thinklight off`.
 
 ## How it works
 

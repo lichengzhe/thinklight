@@ -7,7 +7,7 @@
     {
       "name": "thinklight",
       "source": "./plugin",
-      "description": "Turn the Mac camera LED into an AI-agent status light: steady = working, blinking = waiting for you, off = all done"
+      "description": "Turn the Mac camera LED into an AI-agent status light: on = an agent is running, off = nothing running"
     }
   ]
 }

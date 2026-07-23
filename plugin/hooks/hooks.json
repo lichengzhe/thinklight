@@ -1,5 +1,5 @@
 {
-  "description": "Camera LED status light: on while an agent is running, off when nothing is running (turn ended, API failed, permission prompt, or session exited)",
+  "description": "Camera LED status light: on while an agent is running, off when nothing is running",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -12,29 +12,6 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.local/bin/thinklight on",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.local/bin/thinklight off",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
@@ -42,28 +19,6 @@
             "type": "command",
             "command": "$HOME/.local/bin/thinklight off",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.local/bin/thinklight off",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.local/bin/thinklight off",
-            "timeout": 3
           }
         ]
       }

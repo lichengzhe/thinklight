@@ -63,26 +63,14 @@ cd thinklight
   "UserPromptSubmit": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight on", "timeout": 10 }] }
   ],
-  "PostToolUse": [
-    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight on", "timeout": 10 }] }
-  ],
-  "Notification": [
-    { "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
-  ],
   "Stop": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
-  ],
-  "StopFailure": [
-    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
-  ],
-  "SessionEnd": [
-    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 3 }] }
   ]
 }
 ```
 
-回合结束（`Stop`）、API 出错（`StopFailure`）或等待权限确认（`Notification`）时
-灯会熄灭；你提交下一条消息或批准权限后重新亮起。
+你提交消息（`UserPromptSubmit`）时灯亮起，回合结束（`Stop`）时熄灭。会话退出或
+崩溃后，daemon 会在一秒内清理它的状态。权限确认框弹出期间算作「在跑」，灯保持亮起。
 
 ### Codex CLI
 
@@ -123,8 +111,8 @@ ThinkLight 每 24 小时最多在后台检查一次新版，有更新时发送 m
 - **摄像头选择**：只使用 Mac 内建摄像头，不使用 Studio Display、连续互通相机或
   其他外接摄像头。
 - **异常退出**：ThinkLight 每秒检查一次会话所属进程，并清理已经退出的会话状态。
-  Claude Code 的 Esc 中断目前没有对应 hook，因此中断后灯可能暂时保持亮起；回合
-  结束后会熄灭，也可以运行 `thinklight off`。
+  Claude Code 的 Esc 中断目前没有对应 hook，因此中断后灯可能暂时保持亮起；等下
+  一个回合结束时会熄灭，也可以运行 `thinklight off`。
 
 ## 原理
 
