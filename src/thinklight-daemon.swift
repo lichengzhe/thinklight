@@ -2,12 +2,9 @@ import AVFoundation
 import Foundation
 
 // ThinkLight daemon: hold the Mac's built-in camera so its LED becomes a
-// status light. Once a second it reads the session tokens (each file is
-// "<pid> <run|idle>") and drives one of three states:
-//
-//   any live session idle (waiting on you)  -> blink, 2s lit / 2s dark
-//   any live session running                -> steady on
-//   no live sessions                        -> light off, exit
+// status light. Once a second it reads the session tokens (each file starts
+// with the owner pid): any live session running -> LED on; none -> LED off,
+// exit.
 //
 // Tokens whose recorded process has exited are deleted here, so a crashed
 // session can never leave the LED stuck on.
@@ -70,10 +67,8 @@ session.addOutput(output)
 signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }
 
-enum Want { case steady, blink, quit }
-
-func poll() -> Want {
-    var anyRun = false, anyIdle = false
+func anySessionRunning() -> Bool {
+    var anyRun = false
     let fm = FileManager.default
     for name in (try? fm.contentsOfDirectory(atPath: sessionsDir.path)) ?? [] {
         if name.hasPrefix(".") { continue }  // half-written temp files
@@ -84,12 +79,14 @@ func poll() -> Want {
             try? fm.removeItem(at: file)
             continue
         }
-        // Tokens from older versions carry a backend name here; count them as running
-        if parts.count > 1 && parts[1] == "idle" { anyIdle = true } else { anyRun = true }
+        // "idle" tokens from older versions meant "waiting on you" — no longer lit
+        if parts.count > 1 && parts[1] == "idle" {
+            try? fm.removeItem(at: file)
+            continue
+        }
+        anyRun = true
     }
-    if anyIdle { return .blink }
-    if anyRun { return .steady }
-    return .quit
+    return anyRun
 }
 
 var lit = false
@@ -104,18 +101,11 @@ FileHandle.standardOutput.write(
         .data(using: .utf8)!
 )
 
-var tick = 0
 while true {
-    switch poll() {
-    case .quit:
+    guard anySessionRunning() else {
         setLit(false)
         exit(0)
-    case .steady:
-        setLit(true)
-        tick = 0
-    case .blink:
-        setLit(tick % 4 < 2)
-        tick += 1
     }
+    setLit(true)
     Thread.sleep(forTimeInterval: 1)
 }

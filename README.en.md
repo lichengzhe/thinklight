@@ -7,9 +7,8 @@ light for Claude Code and Codex CLI:
 
 | Light | Meaning |
 | --- | --- |
-| Steady | An agent is running |
-| Blinking | A session is waiting for your input |
-| Off | There are no active sessions |
+| On | An agent is running |
+| Off | No agent is running — finished, or waiting for your input |
 
 [中文](README.md)
 
@@ -27,9 +26,8 @@ It is particularly useful if you:
 - keep several agent sessions open at once;
 - want to know when to return without interrupting your current work.
 
-With multiple sessions, the LED blinks as soon as any session needs attention.
-It stays steady while all active sessions are running and turns off after every
-session exits.
+With multiple sessions, the LED stays on as long as any session is still
+running, and turns off once they have all finished.
 
 ## Install
 
@@ -90,10 +88,9 @@ If you prefer not to use the plugin, merge these hooks into
 }
 ```
 
-ThinkLight starts blinking when a turn ends (`Stop`), the API fails
-(`StopFailure`), or a permission prompt needs confirmation (`Notification`). It
-returns to a steady light when you submit the next message or approve the
-permission prompt.
+The light turns off when a turn ends (`Stop`), the API fails (`StopFailure`),
+or a permission prompt needs confirmation (`Notification`). It turns back on
+when you submit the next message or approve the permission prompt.
 
 ### Codex CLI
 
@@ -112,9 +109,9 @@ are useful for testing, troubleshooting, or integrating another tool:
 
 ```text
 thinklight on               mark the current session as running
-thinklight off [--force]    mark the turn as waiting; remove it when the session exits
+thinklight off [--force]    deregister the current session
                             at a terminal or with --force: clear state and turn off now
-thinklight status           print on, blink, or off
+thinklight status           print on or off
 thinklight blink [seconds]  turn on for the specified time, then turn off
 thinklight check            read the camera hardware state reported by CoreMediaIO
 thinklight update --check   check for a new version
@@ -134,22 +131,22 @@ this repository; installing an update requires running `thinklight update`.
   video storage.
 - **Video calls:** macOS allows multiple processes to share a camera, and
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
-  app is using the camera, however, the LED remains on, so it cannot display
-  ThinkLight's three states on its own.
+  app is using the camera, however, the LED remains on, so it cannot reflect
+  ThinkLight's state on its own.
 - **Camera selection:** ThinkLight uses only the Mac's built-in camera, not a
   Studio Display, Continuity Camera, or another external camera.
 - **Unexpected exits:** ThinkLight checks each session's owner process once per
   second and removes state for processes that have exited. Claude Code currently
-  has no hook for an Esc interrupt, so the LED may remain steady temporarily;
-  it recovers when the turn ends, or you can run `thinklight off`.
+  has no hook for an Esc interrupt, so the LED may remain on temporarily; it
+  turns off when the turn ends, or you can run `thinklight off`.
 
 ## How it works
 
 The ThinkLight Swift daemon starts an `AVCaptureSession` on the built-in camera.
 macOS turns on the hardware-linked green indicator while the camera is actually
-capturing and turns it off when capture stops. The daemon reads the state written
-by each agent session, switches among steady, blinking, and off, and exits when
-no sessions remain.
+capturing and turns it off when capture stops. Once a second the daemon checks
+the sessions registered by each agent: while any is still running it keeps
+capturing (light on); when none remain it stops and exits (light off).
 
 ## License
 
