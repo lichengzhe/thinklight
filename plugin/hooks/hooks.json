@@ -1,5 +1,5 @@
 {
-  "description": "Camera LED status light: on while an agent is running, off when nothing is running",
+  "description": "Camera LED busy light: on while the agent works, off when the turn is done",
   "hooks": {
     "UserPromptSubmit": [
       {

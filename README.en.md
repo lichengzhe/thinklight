@@ -1,33 +1,38 @@
 # ThinkLight 🟢
 
-**Know when your AI agent needs you without switching back to the terminal.**
+**One glance tells you whether the AI is still working or already done.**
 
-ThinkLight turns the green LED beside your Mac's built-in camera into a status
+ThinkLight turns the green LED beside your Mac's built-in camera into a busy
 light for Claude Code and Codex CLI:
 
 | Light | Meaning |
 | --- | --- |
-| On | An agent is running |
-| Off | No agent is running — finished, or waiting for your input |
+| On | The AI is working — go do something else |
+| Off | It's done — your turn |
 
 [中文](README.md)
 
-## When it is useful
+## Why it helps
 
-When an agent task runs for several minutes, you will often move to an editor,
-browser, or another workspace. ThinkLight lets you see its status in your
-peripheral vision without repeatedly checking the terminal or adding popups,
-sounds, or another window. Because the indicator sits outside the screen, it
-remains visible when you change desktops or enter full screen.
+Working with an agent is a relay: you hand off a task and the baton is with
+the AI; when it finishes, the baton comes back to you. But once a task runs
+for a few minutes you switch to something else, and the only way to know the
+baton is back is to keep switching to the terminal to check.
+
+ThinkLight puts that signal in your peripheral vision. While the light is on,
+the AI is still busy — stay focused on your own work. When it goes out, it is
+your turn: review the result, give feedback, hand off the next task. No
+popups, no sounds, no extra window, and it stays visible across desktops and
+full screen.
 
 It is particularly useful if you:
 
-- regularly give Claude Code or Codex long-running tasks;
+- regularly hand long-running tasks to Claude Code or Codex;
 - keep several agent sessions open at once;
-- want to know when to return without interrupting your current work.
+- want to stay focused without missing the handoff.
 
-With multiple sessions, the LED stays on as long as any session is still
-running, and turns off once they have all finished.
+With multiple sessions, the light stays on while any of them is still working,
+and goes out once they have all finished.
 
 ## Install
 

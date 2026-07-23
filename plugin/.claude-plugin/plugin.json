@@ -1,5 +1,5 @@
 {
   "name": "thinklight",
-  "version": "3.0.0",
-  "description": "Turn the Mac camera LED into an AI-agent status light: on while an agent is running, off when nothing is running. Requires ~/.local/bin/thinklight (run install.sh from the repo first)."
+  "version": "2.1.0",
+  "description": "Turn the Mac camera LED into an AI busy light: on while the agent works, off when it's done and it's your turn. Requires ~/.local/bin/thinklight (run install.sh from the repo first)."
 }
