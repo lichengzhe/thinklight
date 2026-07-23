@@ -40,6 +40,8 @@ and goes out once they have all finished.
 
 ## Install
 
+You need a Mac with a built-in camera, running macOS 14 or later.
+
 ### Let AI install it (recommended)
 
 Paste this into Claude Code, Codex, or another coding agent that is **running
@@ -58,35 +60,11 @@ configuration, and verification results. Do not change unrelated settings.
 The agent can handle downloading, compiling, and hook configuration. You still
 need to personally approve macOS camera access and Codex hook trust.
 
-### Build from source
-
-You need a Mac with a built-in camera and Xcode Command Line Tools (`swiftc`).
-
-Install ThinkLight first:
-
-```bash
-git clone https://github.com/lichengzhe/thinklight.git
-cd thinklight
-./install.sh
-```
-
-This builds and installs the programs in `~/.local/bin`. On the first test,
-macOS asks for camera access; after permission is granted, the LED stays on for
-three seconds:
-
-```bash
-~/.local/bin/thinklight blink 3
-```
-
-Next, configure hooks for the agent you use. After that, the light follows your
-sessions automatically; there is normally no need to run `thinklight on` or
-`thinklight off` yourself.
-
 ### Download a prebuilt binary
 
-If installing the Xcode Command Line Tools is inconvenient, you can instead
-download the precompiled universal binaries (Apple Silicon and Intel, macOS
-14+) from [Releases](https://github.com/lichengzhe/thinklight/releases):
+Download the precompiled universal binaries (Apple Silicon and Intel) from
+[Releases](https://github.com/lichengzhe/thinklight/releases), then unpack
+and install them into `~/.local/bin`:
 
 ```bash
 tar xzf thinklight-2.2.0-macos-universal.tar.gz
@@ -96,11 +74,35 @@ install -m 755 thinklight thinklight-daemon thinklight-check ~/.local/bin/
 ```
 
 The prebuilt binaries are ad-hoc signed but not notarized by Apple, hence the
-`xattr` step to clear the download quarantine. Then run
-`~/.local/bin/thinklight blink 3` to grant camera access as above, and
-configure hooks as described below. Note that `thinklight update` and the
-background update check rely on a git checkout and are unavailable with this
-method; building from source remains the recommended install.
+`xattr` step to clear the download quarantine. On the first test, macOS asks
+for camera access; after permission is granted, the LED stays on for three
+seconds:
+
+```bash
+~/.local/bin/thinklight blink 3
+```
+
+With this method `thinklight update` and the background update check are
+unavailable; to update, download the new release again.
+
+### Build from source
+
+If you have the Xcode Command Line Tools (`swiftc`), you can build from
+source instead; `thinklight update` and update notifications work with this
+method:
+
+```bash
+git clone https://github.com/lichengzhe/thinklight.git
+cd thinklight
+./install.sh
+```
+
+This builds and installs the programs in `~/.local/bin`; run
+`thinklight blink 3` to grant camera access and test, as above.
+
+Next, configure hooks for the agent you use. After that, the light follows your
+sessions automatically; there is normally no need to run `thinklight on` or
+`thinklight off` yourself.
 
 ### Claude Code
 
