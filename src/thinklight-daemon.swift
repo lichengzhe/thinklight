@@ -20,10 +20,13 @@ let stateDir = ProcessInfo.processInfo.environment["THINKLIGHT_STATE_DIR"].map {
 } ?? FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".local/state/thinklight", isDirectory: true)
 let sessionsDir = stateDir.appendingPathComponent("sessions", isDirectory: true)
+// Integration tests exercise token cleanup without touching camera hardware.
+let cameraFreeTestMode = ProcessInfo.processInfo.environment["THINKLIGHT_TEST_NO_CAMERA"] == "1"
 
 // Continuity iPhones and third-party webcams stay untouched; they are someone
 // else's camera, not a status light.
 func statusCameras() -> [AVCaptureDevice] {
+    if cameraFreeTestMode { return [] }
     let discovery = AVCaptureDevice.DiscoverySession(
         deviceTypes: [.builtInWideAngleCamera, .external],
         mediaType: .video,
@@ -38,21 +41,23 @@ func statusCameras() -> [AVCaptureDevice] {
     }
 }
 
-guard !statusCameras().isEmpty else {
+guard cameraFreeTestMode || !statusCameras().isEmpty else {
     fputs("thinklight: no usable camera found\n", stderr)
     exit(1)
 }
 
-let sema = DispatchSemaphore(value: 0)
-nonisolated(unsafe) var granted = false
-AVCaptureDevice.requestAccess(for: .video) { ok in
-    granted = ok
-    sema.signal()
-}
-sema.wait()
-guard granted else {
-    fputs("thinklight: camera permission denied (grant it in System Settings > Privacy & Security > Camera)\n", stderr)
-    exit(2)
+if !cameraFreeTestMode {
+    let sema = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var granted = false
+    AVCaptureDevice.requestAccess(for: .video) { ok in
+        granted = ok
+        sema.signal()
+    }
+    sema.wait()
+    guard granted else {
+        fputs("thinklight: camera permission denied (grant it in System Settings > Privacy & Security > Camera)\n", stderr)
+        exit(2)
+    }
 }
 
 final class FrameSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -86,21 +91,125 @@ func makeSession(for device: AVCaptureDevice) -> AVCaptureSession? {
 signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }
 
+struct TranscriptCursor {
+    var offset: UInt64
+    var pending = Data()
+    var discardingPartialLine: Bool
+}
+
+var transcriptCursors: [String: TranscriptCursor] = [:]
+let transcriptLookbackBytes: UInt64 = 128 * 1024
+
+func isTerminalEvent(_ line: Data, turnID: String) -> Bool {
+    let mentionsTurn = line.range(of: Data(turnID.utf8)) != nil
+    let mentionsTerminalEvent =
+        line.range(of: Data("turn_aborted".utf8)) != nil
+        || line.range(of: Data("task_complete".utf8)) != nil
+    guard
+        mentionsTurn,
+        mentionsTerminalEvent,
+        let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+        object["type"] as? String == "event_msg",
+        let payload = object["payload"] as? [String: Any],
+        payload["turn_id"] as? String == turnID,
+        let event = payload["type"] as? String
+    else {
+        return false
+    }
+    return event == "turn_aborted" || event == "task_complete"
+}
+
+// Codex does not run Stop when Ctrl+C interrupts a turn. Its hook payload does
+// provide transcript_path and turn_id, so watch only the newly appended JSONL
+// for that turn's terminal event. This is best-effort because Codex documents
+// the transcript format as unstable; the normal Stop/SessionEnd hooks and
+// owner-pid cleanup remain the primary paths.
+func codexTurnEnded(tokenName: String, transcriptPath: String, turnID: String) -> Bool {
+    guard !transcriptPath.isEmpty, !turnID.isEmpty else { return false }
+    let url = URL(fileURLWithPath: transcriptPath)
+    guard
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+        let fileSize = attributes[.size] as? NSNumber
+    else {
+        return false
+    }
+
+    let size = fileSize.uint64Value
+    var cursor: TranscriptCursor
+    if let existing = transcriptCursors[tokenName], size >= existing.offset {
+        cursor = existing
+    } else {
+        let start = size > transcriptLookbackBytes ? size - transcriptLookbackBytes : 0
+        cursor = TranscriptCursor(offset: start, discardingPartialLine: start > 0)
+    }
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+    defer { try? handle.close() }
+    do {
+        try handle.seek(toOffset: cursor.offset)
+    } catch {
+        return false
+    }
+    guard let fresh = try? handle.readToEnd(), !fresh.isEmpty else {
+        transcriptCursors[tokenName] = cursor
+        return false
+    }
+    cursor.offset += UInt64(fresh.count)
+
+    var bytes = cursor.pending
+    bytes.append(fresh)
+    cursor.pending.removeAll(keepingCapacity: true)
+
+    var start = bytes.startIndex
+    var ended = false
+    for newline in bytes.indices where bytes[newline] == 0x0a {
+        if cursor.discardingPartialLine {
+            cursor.discardingPartialLine = false
+        } else if isTerminalEvent(bytes.subdata(in: start..<newline), turnID: turnID) {
+            ended = true
+        }
+        start = bytes.index(after: newline)
+    }
+    if start < bytes.endIndex && !cursor.discardingPartialLine {
+        let tail = bytes.subdata(in: start..<bytes.endIndex)
+        if isTerminalEvent(tail, turnID: turnID) {
+            ended = true
+        } else {
+            cursor.pending = tail
+        }
+    }
+    transcriptCursors[tokenName] = cursor
+    return ended
+}
+
 func anySessionRunning() -> Bool {
     var anyRun = false
     let fm = FileManager.default
-    for name in (try? fm.contentsOfDirectory(atPath: sessionsDir.path)) ?? [] {
-        if name.hasPrefix(".") { continue }  // half-written temp files
+    let names = (try? fm.contentsOfDirectory(atPath: sessionsDir.path)) ?? []
+    let visibleNames = Set(names.filter { !$0.hasPrefix(".") })
+    transcriptCursors = transcriptCursors.filter { visibleNames.contains($0.key) }
+    for name in visibleNames {
         let file = sessionsDir.appendingPathComponent(name)
-        let parts = ((try? String(contentsOf: file, encoding: .utf8)) ?? "")
-            .split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
-        guard let pid = Int32(parts.first ?? ""), kill(pid, 0) == 0 else {
+        let contents = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+        let lines = contents.components(separatedBy: .newlines)
+        let pidText = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard let pid = Int32(pidText), kill(pid, 0) == 0 else {
             try? fm.removeItem(at: file)
+            transcriptCursors.removeValue(forKey: name)
             continue
         }
         // "idle" tokens from older versions meant "waiting on you" — no longer lit
-        if parts.count > 1 && parts[1] == "idle" {
+        if lines.count > 1 && lines[1] == "idle" {
             try? fm.removeItem(at: file)
+            transcriptCursors.removeValue(forKey: name)
+            continue
+        }
+        let transcriptPath = lines.count > 1 ? lines[1] : ""
+        let turnID = lines.count > 2
+            ? lines[2].trimmingCharacters(in: .whitespacesAndNewlines)
+            : ""
+        if codexTurnEnded(tokenName: name, transcriptPath: transcriptPath, turnID: turnID) {
+            try? fm.removeItem(at: file)
+            transcriptCursors.removeValue(forKey: name)
             continue
         }
         anyRun = true

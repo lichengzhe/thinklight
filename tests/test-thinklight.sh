@@ -43,6 +43,15 @@ run_hook() {
         "$CLI" "$@"
 }
 
+run_codex_hook() {
+  local event=$1 session=$2 turn=$3 transcript=$4
+  shift 4
+  printf '{"hook_event_name":"%s","session_id":"%s","turn_id":"%s","transcript_path":"%s"}\n' \
+    "$event" "$session" "$turn" "$transcript" \
+    | env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$STATE_DIR" \
+        "$CLI" "$@"
+}
+
 mkdir -p "$BIN_DIR"
 swiftc "$ROOT/tests/fake-daemon.swift" -o "$DAEMON"
 
@@ -99,3 +108,72 @@ run_cli off --force </dev/null
 assert_eq "$(run_cli status)" "off"
 kill -0 "$second_pid" 2>/dev/null && fail "force off left the daemon running"
 pass "force off clears state and stops the resident daemon"
+
+# Exercise the production daemon's Codex-interrupt fallback without requesting
+# camera permission or opening a camera.
+swiftc "$ROOT/src/thinklight-daemon.swift" -o "$DAEMON"
+env THINKLIGHT_STATE_DIR="$STATE_DIR" THINKLIGHT_TEST_NO_CAMERA=1 \
+  "$DAEMON" >/dev/null 2>&1 &
+production_pid=$!
+for _ in {1..40}; do
+  kill -0 "$production_pid" 2>/dev/null && break
+  sleep 0.05
+done
+kill -0 "$production_pid" 2>/dev/null || fail "production daemon did not start in test mode"
+
+TRANSCRIPT="$TEST_ROOT/codex transcript.jsonl"
+TURN_A=turn-a
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"$TURN_A\"}}" \
+  > "$TRANSCRIPT"
+run_codex_hook UserPromptSubmit interrupted "$TURN_A" "$TRANSCRIPT" on
+TOKEN_A="$STATE_DIR/sessions/interrupted.$TURN_A"
+[[ -f "$TOKEN_A" ]] || fail "turn-scoped token was not written"
+assert_eq "$(sed -n '2p' "$TOKEN_A")" "$TRANSCRIPT"
+assert_eq "$(sed -n '3p' "$TOKEN_A")" "$TURN_A"
+token_owner=$(sed -n '1p' "$TOKEN_A")
+kill -0 "$token_owner" 2>/dev/null || fail "interrupt test owner was not alive"
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"turn_id\":\"$TURN_A\",\"reason\":\"interrupted\"}}" \
+  >> "$TRANSCRIPT"
+for _ in {1..80}; do
+  [[ ! -e "$TOKEN_A" ]] && break
+  sleep 0.05
+done
+[[ ! -e "$TOKEN_A" ]] || fail "interrupted turn token was not reaped"
+assert_eq "$(run_cli status)" "off"
+kill -0 "$token_owner" 2>/dev/null || fail "test only passed because the owner exited"
+pass "Codex Ctrl+C terminal events clear live-process tokens"
+
+TURN_B=turn-b
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"$TURN_B\"}}" \
+  >> "$TRANSCRIPT"
+run_codex_hook UserPromptSubmit interrupted "$TURN_B" "$TRANSCRIPT" on
+TOKEN_B="$STATE_DIR/sessions/interrupted.$TURN_B"
+[[ -f "$TOKEN_B" ]] || fail "second turn-scoped token was not written"
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"$TURN_B\"}}" \
+  >> "$TRANSCRIPT"
+for _ in {1..80}; do
+  [[ ! -e "$TOKEN_B" ]] && break
+  sleep 0.05
+done
+[[ ! -e "$TOKEN_B" ]] || fail "completed turn token was not reaped"
+assert_eq "$(run_cli status)" "off"
+pass "terminal events also recover from a missed normal Stop hook"
+
+TURN_C=turn-c
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"$TURN_C\"}}" \
+  >> "$TRANSCRIPT"
+run_codex_hook UserPromptSubmit interrupted "$TURN_C" "$TRANSCRIPT" on
+TOKEN_C="$STATE_DIR/sessions/interrupted.$TURN_C"
+[[ -f "$TOKEN_C" ]] || fail "third turn-scoped token was not written"
+run_hook SessionEnd interrupted off
+[[ ! -e "$TOKEN_C" ]] || fail "SessionEnd did not clear turn-scoped tokens"
+assert_eq "$(run_cli status)" "off"
+pass "SessionEnd clears every token for its session"
+
+run_cli off --force </dev/null
+kill -0 "$production_pid" 2>/dev/null && fail "test daemon survived final cleanup"

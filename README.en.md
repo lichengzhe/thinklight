@@ -123,14 +123,18 @@ If you prefer not to use the plugin, merge these hooks into
   ],
   "StopFailure": [
     { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 10 }] }
+  ],
+  "SessionEnd": [
+    { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/thinklight off", "timeout": 3 }] }
   ]
 }
 ```
 
 The light turns on when you submit a message (`UserPromptSubmit`) and turns off
-when the turn ends normally (`Stop`) or an API request fails (`StopFailure`).
-If a session exits or crashes, the daemon clears its state within a second. A
-pending permission prompt counts as running, so the light stays on.
+when the turn ends normally (`Stop`), an API request fails (`StopFailure`), or
+the session ends (`SessionEnd`). If a session exits or crashes, the daemon
+clears its state within a second. A pending permission prompt counts as
+running, so the light stays on.
 
 ### Codex CLI
 
@@ -182,10 +186,13 @@ this repository; installing an update requires running `thinklight update`.
   attributes the camera use to `thinklight-daemon` itself. Only the small green
   dot on the Control Center icon appears — no extra green camera pill in the
   menu bar.
-- **Unexpected exits:** ThinkLight checks each session's owner process once per
-  second and removes state for processes that have exited. Claude Code currently
-  has no hook for an Esc interrupt, so the LED may remain on temporarily; it
-  turns off when the next turn ends, or you can run `thinklight off`.
+- **Unexpected exits and interrupts:** ThinkLight checks each session's owner
+  process once per second and removes state for processes that have exited.
+  Because a Codex Ctrl+C interrupt does not run the `Stop` hook, the daemon also
+  detects that turn's terminal event in the local transcript and clears its
+  state. Claude Code currently has no hook for an Esc interrupt, so the LED may
+  remain on temporarily; it turns off when the next turn ends, or you can run
+  `thinklight off`.
 
 ## How it works
 
@@ -195,8 +202,10 @@ macOS turns on the hardware-linked green indicator while the camera is actually
 capturing and turns it off when capture stops. Once a second the daemon checks
 the sessions registered by each agent: while any is still running it keeps
 capturing (light on); when none remain it stops capture and waits for the next
-session (light off). Keeping the idle daemon resident avoids losing a new start
-signal while an old process is exiting.
+session (light off). Codex tokens also carry transcript and turn metadata so
+the daemon can recognize a Ctrl+C-interrupted turn that never ran `Stop`.
+Keeping the idle daemon resident avoids losing a new start signal while an old
+process is exiting.
 
 ## License
 
