@@ -86,6 +86,13 @@ assert_eq "$(run_cli status)" "on"
 run_hook Stop gamma off
 pass "_sync waits for replacement and preserves active sessions"
 
+run_hook UserPromptSubmit upgrading on
+[[ -f "$STATE_DIR/sessions/upgrading" ]] || fail "legacy session token was not written"
+run_codex_hook Stop upgrading upgrade-turn /dev/null off
+[[ ! -e "$STATE_DIR/sessions/upgrading" ]] || fail "new Stop left a pre-upgrade token behind"
+assert_eq "$(run_cli status)" "off"
+pass "turn-scoped Stop clears tokens written before an upgrade"
+
 FAILED_STATE="$TEST_ROOT/failed-state"
 if printf '{"session_id":"failed"}\n' \
   | env THINKLIGHT_STATE_DIR="$FAILED_STATE" THINKLIGHT_BIN_DIR="$TEST_ROOT/missing-bin" \
