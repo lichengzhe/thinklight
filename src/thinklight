@@ -88,7 +88,9 @@ write_token() {
 remove_context_tokens() {
   local token
   if [[ -n "$TURN_ID" ]]; then
-    rm -f "$SESSIONS/$KEY"
+    # Also remove the legacy per-session token so upgrading while a turn is
+    # active cannot strand the token written by the previous CLI version.
+    rm -f "$SESSIONS/$KEY" "$SESSIONS/$SESSION_KEY"
     return
   fi
   # SessionEnd has no turn id. Remove the legacy per-session token plus any
