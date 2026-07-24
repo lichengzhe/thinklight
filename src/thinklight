@@ -78,7 +78,7 @@ load_session_context() {
 write_token() {
   local tmp
   tmp=$(mktemp "$SESSIONS/.tok.XXXXXX") || return 1
-  if ! printf '%s\n%s\n%s\n' "$OWNER_PID" "$TRANSCRIPT_PATH" "$TURN_ID" > "$tmp" \
+  if ! printf '%s\n%s\n%s\n%s\n' "$OWNER_PID" "$TRANSCRIPT_PATH" "$TURN_ID" "$SESSION_KEY" > "$tmp" \
     || ! mv -f "$tmp" "$SESSIONS/$KEY"; then
     rm -f "$tmp"
     return 1
@@ -94,9 +94,13 @@ remove_context_tokens() {
     return
   fi
   # SessionEnd has no turn id. Remove the legacy per-session token plus any
-  # turn-scoped Codex tokens that belong to this session.
-  for token in "$SESSIONS/$SESSION_KEY" "$SESSIONS/$SESSION_KEY".*; do
+  # turn-scoped Codex tokens that recorded this session key. Session ids may
+  # contain dots, so the name prefix alone could also match a different
+  # session named "$SESSION_KEY.something"; the recorded key disambiguates.
+  rm -f "$SESSIONS/$SESSION_KEY" || return 1
+  for token in "$SESSIONS/$SESSION_KEY".*; do
     [[ -f "$token" ]] || continue
+    [[ "$(sed -n '4p' "$token" 2>/dev/null)" == "$SESSION_KEY" ]] || continue
     rm -f "$token" || return 1
   done
 }
