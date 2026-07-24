@@ -24,6 +24,9 @@ REPO_URL="https://github.com/lichengzhe/thinklight.git"
 PAYLOAD=""
 KEY=""
 OWNER_PID=""
+SESSION_KEY=""
+TRANSCRIPT_PATH=""
+TURN_ID=""
 
 json_field() {
   printf '%s' "$PAYLOAD" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
@@ -56,18 +59,44 @@ load_session_context() {
   PAYLOAD=""
   [[ -t 0 ]] || PAYLOAD=$(cat) || return 1
   OWNER_PID=$(owner_pid)
-  KEY=$(json_field session_id)
-  [[ "$KEY" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || KEY="ppid-$OWNER_PID"
+  SESSION_KEY=$(json_field session_id)
+  [[ "$SESSION_KEY" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]] || SESSION_KEY="ppid-$OWNER_PID"
+  TRANSCRIPT_PATH=$(json_field transcript_path)
+  TURN_ID=$(json_field turn_id)
+  KEY="$SESSION_KEY"
+  # Codex includes a stable turn id on turn-scoped hooks. Keeping each turn in
+  # its own token lets the daemon reap an interrupted turn without racing the
+  # next prompt from the same still-running session.
+  if [[ "$TURN_ID" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]]; then
+    KEY="$SESSION_KEY.$TURN_ID"
+  else
+    TURN_ID=""
+  fi
 }
 
 # Written via mktemp+mv so the daemon never reads a half-written token.
 write_token() {
   local tmp
   tmp=$(mktemp "$SESSIONS/.tok.XXXXXX") || return 1
-  if ! printf '%s\n' "$OWNER_PID" > "$tmp" || ! mv -f "$tmp" "$SESSIONS/$KEY"; then
+  if ! printf '%s\n%s\n%s\n' "$OWNER_PID" "$TRANSCRIPT_PATH" "$TURN_ID" > "$tmp" \
+    || ! mv -f "$tmp" "$SESSIONS/$KEY"; then
     rm -f "$tmp"
     return 1
   fi
+}
+
+remove_context_tokens() {
+  local token
+  if [[ -n "$TURN_ID" ]]; then
+    rm -f "$SESSIONS/$KEY"
+    return
+  fi
+  # SessionEnd has no turn id. Remove the legacy per-session token plus any
+  # turn-scoped Codex tokens that belong to this session.
+  for token in "$SESSIONS/$SESSION_KEY" "$SESSIONS/$SESSION_KEY".*; do
+    [[ -f "$token" ]] || continue
+    rm -f "$token" || return 1
+  done
 }
 
 daemon_running() {
@@ -224,7 +253,7 @@ case "${1:-status}" in
       stop_daemons || exit 1
     else
       load_session_context || exit 1
-      rm -f "$SESSIONS/$KEY" || exit 1
+      remove_context_tokens || exit 1
     fi
     ;;
   status)
