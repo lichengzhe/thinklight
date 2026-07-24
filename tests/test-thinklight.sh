@@ -138,6 +138,7 @@ TOKEN_A="$STATE_DIR/sessions/interrupted.$TURN_A"
 [[ -f "$TOKEN_A" ]] || fail "turn-scoped token was not written"
 assert_eq "$(sed -n '2p' "$TOKEN_A")" "$TRANSCRIPT"
 assert_eq "$(sed -n '3p' "$TOKEN_A")" "$TURN_A"
+assert_eq "$(sed -n '4p' "$TOKEN_A")" "interrupted"
 token_owner=$(sed -n '1p' "$TOKEN_A")
 kill -0 "$token_owner" 2>/dev/null || fail "interrupt test owner was not alive"
 printf '%s\n' \
@@ -181,6 +182,71 @@ run_hook SessionEnd interrupted off
 [[ ! -e "$TOKEN_C" ]] || fail "SessionEnd did not clear turn-scoped tokens"
 assert_eq "$(run_cli status)" "off"
 pass "SessionEnd clears every token for its session"
+
+# Session ids may contain dots, so "alpha.beta" is a valid session whose name
+# also matches the "alpha.*" glob SessionEnd expands.
+run_codex_hook UserPromptSubmit alpha turn-x /dev/null on
+run_hook UserPromptSubmit alpha.beta on
+run_hook SessionEnd alpha off
+[[ ! -e "$STATE_DIR/sessions/alpha.turn-x" ]] || fail "SessionEnd left its own turn-scoped token"
+[[ -f "$STATE_DIR/sessions/alpha.beta" ]] || fail "SessionEnd for alpha removed session alpha.beta's token"
+run_hook SessionEnd alpha.beta off
+assert_eq "$(run_cli status)" "off"
+pass "SessionEnd only removes tokens recorded for its session key"
+
+# A transcript larger than the 128KB lookback makes the daemon start mid-file
+# and discard the partial first line before scanning.
+BIG_TRANSCRIPT="$TEST_ROOT/big transcript.jsonl"
+TURN_D=turn-d
+for _ in {1..2000}; do
+  printf '%s\n' \
+    "{\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message\",\"turn_id\":\"$TURN_D\",\"message\":\"padding\"}}"
+done > "$BIG_TRANSCRIPT"
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"turn_id\":\"$TURN_D\"}}" \
+  >> "$BIG_TRANSCRIPT"
+run_codex_hook UserPromptSubmit lookback "$TURN_D" "$BIG_TRANSCRIPT" on
+TOKEN_D="$STATE_DIR/sessions/lookback.$TURN_D"
+for _ in {1..80}; do
+  [[ ! -e "$TOKEN_D" ]] && break
+  sleep 0.05
+done
+[[ ! -e "$TOKEN_D" ]] || fail "lookback did not find a terminal event that predates the token"
+assert_eq "$(run_cli status)" "off"
+pass "lookback reaps a turn whose terminal event predates its token"
+
+# Two live tokens (a stale turn and the current one) can share one transcript;
+# a terminal event must reap only the turn it names.
+TURN_E=turn-e
+TURN_F=turn-f
+printf '%s\n%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"$TURN_E\"}}" \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"$TURN_F\"}}" \
+  >> "$TRANSCRIPT"
+run_codex_hook UserPromptSubmit shared "$TURN_E" "$TRANSCRIPT" on
+run_codex_hook UserPromptSubmit shared "$TURN_F" "$TRANSCRIPT" on
+TOKEN_E="$STATE_DIR/sessions/shared.$TURN_E"
+TOKEN_F="$STATE_DIR/sessions/shared.$TURN_F"
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"turn_id\":\"$TURN_E\"}}" \
+  >> "$TRANSCRIPT"
+for _ in {1..80}; do
+  [[ ! -e "$TOKEN_E" ]] && break
+  sleep 0.05
+done
+[[ ! -e "$TOKEN_E" ]] || fail "aborted turn sharing a transcript was not reaped"
+[[ -f "$TOKEN_F" ]] || fail "aborting one turn reaped its sibling token"
+assert_eq "$(run_cli status)" "on"
+printf '%s\n' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"$TURN_F\"}}" \
+  >> "$TRANSCRIPT"
+for _ in {1..80}; do
+  [[ ! -e "$TOKEN_F" ]] && break
+  sleep 0.05
+done
+[[ ! -e "$TOKEN_F" ]] || fail "completed turn sharing a transcript was not reaped"
+assert_eq "$(run_cli status)" "off"
+pass "shared transcripts reap only the turn a terminal event names"
 
 run_cli off --force </dev/null
 kill -0 "$production_pid" 2>/dev/null && fail "test daemon survived final cleanup"
