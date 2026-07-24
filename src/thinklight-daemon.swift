@@ -68,12 +68,24 @@ final class FrameSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 let sink = FrameSink()
 let sinkQueue = DispatchQueue(label: "thinklight.sink")
 
+var sessions: [String: AVCaptureSession] = [:]  // keyed by camera uniqueID
+// A camera that refuses to open (still settling right after a display is
+// plugged in, or held by something else) is retried a few ticks later instead
+// of every second, and only complains the first time.
+var openRetryTicks: [String: Int] = [:]
+var reportedOpenFailures: Set<String> = []
+let openRetryDelay = 5
+
 // A session with no output never actually starts capturing, so the LED stays dark
 func makeSession(for device: AVCaptureDevice) -> AVCaptureSession? {
+    func report(_ message: String) {
+        guard reportedOpenFailures.insert(device.uniqueID).inserted else { return }
+        fputs(message, stderr)
+    }
     let session = AVCaptureSession()
     session.sessionPreset = .low
     guard let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
-        fputs("thinklight: cannot open \(device.localizedName)\n", stderr)
+        report("thinklight: cannot open \(device.localizedName)\n")
         return nil
     }
     session.addInput(input)
@@ -81,11 +93,39 @@ func makeSession(for device: AVCaptureDevice) -> AVCaptureSession? {
     output.alwaysDiscardsLateVideoFrames = true
     output.setSampleBufferDelegate(sink, queue: sinkQueue)
     guard session.canAddOutput(output) else {
-        fputs("thinklight: cannot add video output for \(device.localizedName)\n", stderr)
+        report("thinklight: cannot add video output for \(device.localizedName)\n")
         return nil
     }
     session.addOutput(output)
     return session
+}
+
+// Re-discover on every lit tick, not just on the dark -> lit edge: a Studio
+// Display docked in the middle of a turn has to join the sync right away, and
+// one undocked mid-turn must not leave a stale session behind.
+func syncLitCameras() {
+    let cameras = statusCameras()
+    let ids = Set(cameras.map(\.uniqueID))
+    for (id, session) in sessions where !ids.contains(id) {
+        session.stopRunning()
+        sessions.removeValue(forKey: id)
+    }
+    openRetryTicks = openRetryTicks.filter { ids.contains($0.key) }
+    reportedOpenFailures.formIntersection(ids)
+    for camera in cameras where sessions[camera.uniqueID] == nil {
+        if let wait = openRetryTicks[camera.uniqueID], wait > 0 {
+            openRetryTicks[camera.uniqueID] = wait - 1
+            continue
+        }
+        guard let session = makeSession(for: camera) else {
+            openRetryTicks[camera.uniqueID] = openRetryDelay
+            continue
+        }
+        openRetryTicks.removeValue(forKey: camera.uniqueID)
+        reportedOpenFailures.remove(camera.uniqueID)
+        sessions[camera.uniqueID] = session
+    }
+    for session in sessions.values where !session.isRunning { session.startRunning() }
 }
 
 signal(SIGTERM) { _ in exit(0) }
@@ -222,25 +262,14 @@ FileHandle.standardOutput.write(
         .data(using: .utf8)!
 )
 
-var sessions: [String: AVCaptureSession] = [:]  // keyed by camera uniqueID
 var lit = false
 while true {
     let shouldLight = anySessionRunning()
-    if shouldLight != lit {
-        if shouldLight {
-            // Re-discover on every lighting so a Studio Display docked or
-            // undocked since the last run joins or leaves the sync.
-            let cameras = statusCameras()
-            let ids = Set(cameras.map(\.uniqueID))
-            sessions = sessions.filter { ids.contains($0.key) }
-            for camera in cameras where sessions[camera.uniqueID] == nil {
-                sessions[camera.uniqueID] = makeSession(for: camera)
-            }
-            for session in sessions.values { session.startRunning() }
-        } else {
-            for session in sessions.values { session.stopRunning() }
-        }
-        lit = shouldLight
+    if shouldLight {
+        syncLitCameras()
+    } else if lit {
+        for session in sessions.values { session.stopRunning() }
     }
+    lit = shouldLight
     Thread.sleep(forTimeInterval: 1)
 }

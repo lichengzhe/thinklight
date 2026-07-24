@@ -180,7 +180,8 @@ this repository; installing an update requires running `thinklight update`.
   ThinkLight's state on its own.
 - **Camera selection:** ThinkLight uses the Mac's built-in camera, and when a
   Studio Display is connected its camera LED lights in sync — one 🟢 per
-  display (docking is re-checked each time the light turns on). Continuity
+  display (docking is re-checked once a second while the light is on, so a
+  display plugged in mid-run joins about a second later). Continuity
   Camera and other external webcams are left alone.
 - **Indicator attribution:** The daemon is launched through launchd, so macOS
   attributes the camera use to `thinklight-daemon` itself. Only the small green
