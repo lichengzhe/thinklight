@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - plugin/.claude-plugin/plugin.json
+      - scripts/build-release.sh
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          version=$(/usr/bin/plutil -extract version raw -o - plugin/.claude-plugin/plugin.json)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid plugin version: $version"
+            exit 1
+          fi
+
+          tag="v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already published; nothing to do."
+          elif git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag exists without a release."
+            exit 1
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate the release
+        if: steps.release.outputs.publish == 'true'
+        shell: bash
+        run: |
+          bash -n get.sh install.sh src/thinklight scripts/build-release.sh tests/test-thinklight.sh
+          for json_file in \
+            .claude-plugin/marketplace.json \
+            plugin/.claude-plugin/plugin.json \
+            plugin/hooks/hooks.json
+          do
+            /usr/bin/plutil -convert json -o /dev/null "$json_file"
+          done
+          tests/test-thinklight.sh
+
+      - name: Build release assets
+        if: steps.release.outputs.publish == 'true'
+        shell: bash
+        run: scripts/build-release.sh dist
+
+      - name: Publish GitHub Release
+        if: steps.release.outputs.publish == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          notes="Precompiled universal (arm64 + x86_64) macOS binaries: \`thinklight\`, \`thinklight-daemon\`, and \`thinklight-check\`. Requires macOS 14+.
+
+          **Quick install** (run the same command again to update):
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
+          \`\`\`
+
+          The binaries are ad-hoc signed and not notarized. SHA-256 checksums are attached."
+
+          gh release create "$TAG" \
+            "dist/thinklight-$VERSION-macos-universal.tar.gz" \
+            "dist/thinklight-macos-universal.tar.gz" \
+            "dist/SHA256SUMS.txt" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes "$notes" \
+            --generate-notes \
+            --latest

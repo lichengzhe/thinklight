@@ -249,4 +249,7 @@ assert_eq "$(run_cli status)" "off"
 pass "shared transcripts reap only the turn a terminal event names"
 
 run_cli off --force </dev/null
-kill -0 "$production_pid" 2>/dev/null && fail "test daemon survived final cleanup"
+if kill -0 "$production_pid" 2>/dev/null; then
+  fail "test daemon survived final cleanup"
+fi
+pass "final cleanup stops the production daemon"
