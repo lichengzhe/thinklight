@@ -263,7 +263,7 @@ FileHandle.standardOutput.write(
 )
 
 var lit = false
-while true {
+func tick() {
     let shouldLight = anySessionRunning()
     if shouldLight {
         syncLitCameras()
@@ -271,5 +271,21 @@ while true {
         for session in sessions.values { session.stopRunning() }
     }
     lit = shouldLight
-    Thread.sleep(forTimeInterval: 1)
 }
+
+// The once-a-second tick runs on the main run loop rather than a sleep loop.
+// AVFoundation refreshes its cached device list from run-loop notifications, so
+// a daemon that never runs one keeps listing a Studio Display long after its
+// cable is pulled — and keeps a session that looks alive but captures nothing,
+// leaving that display dark for the rest of the daemon's life.
+final class Ticker: NSObject {
+    @objc func onTimer() { tick() }
+}
+let ticker = Ticker()
+let timer = Timer(
+    timeInterval: 1, target: ticker, selector: #selector(Ticker.onTimer),
+    userInfo: nil, repeats: true
+)
+RunLoop.main.add(timer, forMode: .common)
+timer.fire()
+RunLoop.main.run()
