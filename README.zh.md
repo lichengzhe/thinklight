@@ -11,7 +11,7 @@ ThinkLight用Mac内建摄像头旁的绿灯显示Claude Code和Codex CLI的状�
 | AI正在干活——放心去做别的 | 常亮 | 循环播放背景音乐 |
 | 干完了——轮到你 | 熄灭 | 播放一次完成音 |
 
-> **最快安装：**[在Claude Code里两条命令，再在终端里一行。](#claude-code推荐)
+> **最快安装：**[复制一段指令，让Claude Code或Codex自动完成安装和配置。](#让agent帮你装推荐)
 
 ## 有什么用
 
@@ -35,9 +35,27 @@ ThinkLight把这个信号放进余光：灯亮着，AI还在忙，你继续专�
 
 分两部分：**插件**负责在Agent开始和结束时通知状态灯，**程序**负责占住摄像头把LED点亮。插件会自己保持更新，程序装一次即可。
 
-### Claude Code（推荐）
+### 让Agent帮你装（推荐）
 
-在Claude Code里：
+把下面这段直接发给**正在这台Mac上运行、能够操作终端**的Claude Code、Codex或其他coding agent：
+
+```text
+请帮我在这台 Mac 上安装并配置 ThinkLight：https://github.com/lichengzhe/thinklight。
+先阅读仓库中的 README.zh.md 和 get.sh，确认安装范围。优先走插件：Claude Code 用
+`claude plugin marketplace add lichengzhe/thinklight` 和
+`claude plugin install thinklight@thinklight`，Codex CLI 用对应的 codex plugin 命令；
+只有插件方式失败时，才退回到往 ~/.claude/settings.json 里写 hooks。
+然后运行 get.sh 安装程序（或克隆仓库后运行 install.sh 从源码构建），并运行
+~/.local/bin/thinklight blink 3 和 ~/.local/bin/thinklight check 验证。
+需要我授予 macOS 摄像头权限或确认 hook 信任时，停下来明确告诉我该点哪里。
+完成后汇报安装位置、hook 配置和验证结果；不要改动无关设置。
+```
+
+macOS摄像头授权与Codex hook信任仍需要你亲自确认。
+
+### Claude Code 插件
+
+想自己动手的话，在Claude Code里执行两条命令：
 
 ```text
 /plugin marketplace add lichengzhe/thinklight
@@ -64,24 +82,6 @@ codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
 codex plugin add thinklight@thinklight
 codex   # 在交互会话中确认 hook 信任提示
 ```
-
-### 让Agent帮你装
-
-把下面这段直接发给**正在这台Mac上运行、能够操作终端**的Claude Code、Codex或其他coding agent：
-
-```text
-请帮我在这台 Mac 上安装并配置 ThinkLight：https://github.com/lichengzhe/thinklight。
-先阅读仓库中的 README.zh.md 和 get.sh，确认安装范围。优先走插件：Claude Code 用
-`claude plugin marketplace add lichengzhe/thinklight` 和
-`claude plugin install thinklight@thinklight`，Codex CLI 用对应的 codex plugin 命令；
-只有插件方式失败时，才退回到往 ~/.claude/settings.json 里写 hooks。
-然后运行 get.sh 安装程序（或克隆仓库后运行 install.sh 从源码构建），并运行
-~/.local/bin/thinklight blink 3 和 ~/.local/bin/thinklight check 验证。
-需要我授予 macOS 摄像头权限或确认 hook 信任时，停下来明确告诉我该点哪里。
-完成后汇报安装位置、hook 配置和验证结果；不要改动无关设置。
-```
-
-macOS摄像头授权与Codex hook信任仍需要你亲自确认。
 
 ### 其他安装方式
 

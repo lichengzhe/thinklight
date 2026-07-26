@@ -13,7 +13,7 @@ status of Claude Code and Codex CLI, with optional sound to match:
 | The AI is working — go do something else | On | A track loops |
 | It's done — your turn | Off | A chime plays once |
 
-> **Fastest setup:** [Two commands in Claude Code, then one line in a terminal.](#claude-code-recommended)
+> **Fastest setup:** [Paste one prompt and let Claude Code or Codex install and configure it.](#let-an-agent-install-it-recommended)
 
 ## Why it helps
 
@@ -49,9 +49,28 @@ Two pieces: the **plugin**, which tells the light when your agent starts and
 stops, and the **programs**, which hold the camera so the LED comes on. The
 plugin keeps itself up to date; the programs are installed once.
 
-### Claude Code (recommended)
+### Let an agent install it (recommended)
 
-In Claude Code:
+Paste this into Claude Code, Codex, or another coding agent that is **running
+on this Mac and can use its terminal**:
+
+```text
+Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
+First read README.md and get.sh to confirm the installation scope. Prefer the plugin: run
+`claude plugin marketplace add lichengzhe/thinklight` and `claude plugin install thinklight@thinklight`
+for Claude Code, and the codex plugin equivalents for Codex CLI, falling back to hooks in
+~/.claude/settings.json only if the plugin route fails. Then run get.sh to install the programs
+(or clone the repository and run install.sh to build from source), and verify with
+~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to
+click when macOS asks for camera access or Codex asks me to trust the hooks. When finished, report
+the install location, hook configuration, and verification results. Do not change unrelated settings.
+```
+
+You still need to personally approve macOS camera access and Codex hook trust.
+
+### Claude Code plugin
+
+Doing it yourself is two commands in Claude Code:
 
 ```text
 /plugin marketplace add lichengzhe/thinklight
@@ -85,25 +104,6 @@ codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
 codex plugin add thinklight@thinklight
 codex   # confirm the hook trust prompt in an interactive session
 ```
-
-### Let an agent do it
-
-Paste this into Claude Code, Codex, or another coding agent that is **running
-on this Mac and can use its terminal**:
-
-```text
-Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
-First read README.md and get.sh to confirm the installation scope. Prefer the plugin: run
-`claude plugin marketplace add lichengzhe/thinklight` and `claude plugin install thinklight@thinklight`
-for Claude Code, and the codex plugin equivalents for Codex CLI, falling back to hooks in
-~/.claude/settings.json only if the plugin route fails. Then run get.sh to install the programs
-(or clone the repository and run install.sh to build from source), and verify with
-~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to
-click when macOS asks for camera access or Codex asks me to trust the hooks. When finished, report
-the install location, hook configuration, and verification results. Do not change unrelated settings.
-```
-
-You still need to personally approve macOS camera access and Codex hook trust.
 
 ### Other ways to install
 
