@@ -8,7 +8,7 @@
     {
       "name": "thinklight",
       "source": "./plugin",
-      "description": "Turn the Mac camera LED into an AI busy light: on = the agent is working, off = done, your turn. Optional sound, off until you ask for it"
+      "description": "macOS only. Turn the Mac camera LED into an AI busy light: on = the agent is working, off = done, your turn. Opens the camera to light the LED and discards every frame; hooks write a local session token and read no prompt content. Optional sound, off until you ask for it. Requires the thinklight programs in ~/.local/bin"
     }
   ]
 }
