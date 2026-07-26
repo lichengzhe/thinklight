@@ -86,7 +86,7 @@ cd thinklight
 /plugin install thinklight@thinklight
 ```
 
-除了hooks，插件还提供三个用于[声音](#声音默认关闭)的命令：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。这三个只能由你主动触发，Claude不会自己调用，也不占用它的上下文。
+除了hooks，插件还提供三个用于[声音](#声音默认关闭)的命令：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。这三个只能由你主动触发，Claude不会自己调用。
 
 如果不使用插件，也可以把以下hooks合并到`~/.claude/settings.json`：
 

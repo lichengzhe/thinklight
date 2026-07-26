@@ -118,8 +118,7 @@ This repository also provides a Claude Code plugin marketplace:
 Besides the hooks, the plugin adds three commands for the optional
 [sound](#sound-optional-off-by-default) — `/thinklight:unmute`,
 `/thinklight:mute`, and `/thinklight:config`. All three are yours to invoke
-only: Claude never triggers them on its own, and they add nothing to its
-context.
+only; Claude never triggers them on its own.
 
 If you prefer not to use the plugin, merge these hooks into
 `~/.claude/settings.json`:
