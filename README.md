@@ -19,7 +19,7 @@ ThinkLight用Mac内建摄像头旁的绿灯显示Claude Code和Codex CLI的状�
 
 ThinkLight把这个信号放进余光：灯亮着，AI还在忙，你继续专注手头的事；灯灭了，轮到你——验收结果、给反馈、派下一个任务。不弹窗，也不像桌宠或状态挂件要占一块屏幕——灯在屏幕之外，不占一个像素，切换桌面或进入全屏后依然可见。
 
-如果你经常派完任务就离开屏幕，还可以再配上声音：干活时循环播放一段背景音乐，干完时播放一次完成音。声音默认是关的，装好后依然完全静默，直到你运行`thinklight unmute`。
+人不在屏幕前的时候，还可以[配上声音](#声音默认关闭)——默认关闭，`thinklight unmute`打开。
 
 它尤其适合：
 
@@ -75,7 +75,7 @@ cd thinklight
 
 程序会编译并安装到`~/.local/bin`，同样运行`thinklight blink 3`授权摄像头并测试。
 
-随后为你使用的AI Agent配置hooks。配置完成后，状态会随会话自动更新，日常不需要手动运行`thinklight on`或`thinklight off`。
+随后为你使用的AI Agent配置hooks。配置完成后，状态会随会话自动更新。
 
 ### Claude Code
 
@@ -143,36 +143,23 @@ ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS
 
 灯只在你看得见的地方报信。派完任务就去做别的、人不在屏幕前时，声音能补上这一段。
 
-ThinkLight装好后是静音的，打开只要一条命令：
-
 ```bash
 thinklight unmute      # 干活时循环播放，干完时一声提示
 thinklight mute        # 恢复静默，绿灯照常工作
-thinklight config      # 当前是哪种状态，以及装了哪些音轨
+thinklight config      # 当前状态和已装的音轨
 ```
 
-在Claude Code里，插件提供同样的三个命令：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。开关一秒内生效，所以`/thinklight:unmute`在它自己那一轮就能听见。
+Claude Code插件里是同样的三个：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。开关一秒内生效，所以`/thinklight:unmute`在它自己那一轮就能听见。
 
-第一次`unmute`会把两首默认音轨装到位：
+第一次`unmute`会把两首默认音轨装到`~/.local/share/thinklight/`：`loop`循环播放，`done`播一次。想换成自己的直接替换文件，格式支持macOS能解码的常见类型（FLAC、MP3、WAV、AAC等），扩展名不限，只有`loop`和`done`这两个名字有意义；换完运行`thinklight mute && thinklight unmute`重新加载。之后再`unmute`不会覆盖你换过的音轨，删掉才会取回默认曲——安装和更新同样碰不到这两个文件，也改不了开关状态。（想放到别处：设`THINKLIGHT_SHARE_DIR`。）
 
-```text
-~/.local/share/thinklight/loop.flac   AI干活时循环播放
-~/.local/share/thinklight/done.flac   干完时播放一次
-```
-
-想换成自己的，直接替换文件即可，不用重新编译。格式支持macOS能解码的常见类型（FLAC、MP3、WAV、AAC等），扩展名不必一致，只有`loop`和`done`这两个名字有意义。声音开着时daemon会占用音轨文件，换完运行`thinklight mute && thinklight unmute`即可加载新的。之后再`unmute`不会覆盖你换过的音轨；想换回默认曲，把它删掉再`unmute`。
-
-安装和更新都改不了以上任何一项：安装脚本只刷新`~/.local/share/thinklight/defaults/`——也就是`unmute`取默认曲的地方——真正生效的音轨和开关本身都在安装脚本不写的位置。所以更新既不会让一台静音的机器突然出声，也不会覆盖你选的音轨。
-
-音量跟随系统音量，ThinkLight不单独调节。完成音还没放完你就派了新任务的话，它会被立刻掐断换回背景音乐——「轮到你了」的提示在下一轮开始的瞬间就过期了。`thinklight blink`走的是同一条on/off路径，所以打开声音后这个诊断命令也会响。
-
-想把开关和音轨放到别处，设置`THINKLIGHT_SHARE_DIR`即可，daemon和CLI都读它。
+音量跟随系统音量。完成音还没放完你就派了新任务的话，它会被立刻掐断——「轮到你了」在下一轮开始的瞬间就过期了。`thinklight blink`走的是同一条on/off路径，所以打开声音后这个诊断命令也会响。
 
 ## 隐私、资源与兼容性
 
 - **摄像头画面**：ThinkLight需要摄像头权限来点亮硬件LED。采集到的帧会在回调中直接丢弃，不做图像处理，也不写入磁盘。
-- **资源占用**：采集使用低分辨率preset，不编码、不保存视频。空闲时daemon继续等待下一次会话，但摄像头采集完全停止。声音打开时，音轨会被打开并预加载播放缓冲，而不是整首解码进内存。
-- **声音**：音轨完全本地播放，不联网。静音状态（也就是默认状态）下daemon不做任何音频初始化。
+- **资源占用**：采集使用低分辨率preset，不编码、不保存视频。空闲时daemon继续等待下一次会话，但摄像头采集完全停止。
+- **声音**：音轨完全本地播放，不联网；打开时音轨只是被打开并预加载播放缓冲，不整首解码进内存。静音（默认状态）下daemon不做任何音频初始化。
 - **视频会议**：macOS支持多个进程共享摄像头，ThinkLight已测试可与Zoom、腾讯会议同时运行。但其他应用正在使用摄像头时，绿灯会持续亮起，此时灯光无法反映ThinkLight的状态。
 - **摄像头选择**：使用Mac内建摄像头；接有Studio Display时，它的摄像头灯也会同步亮灭，每台显示器一个🟢（灯亮期间每秒重新检测插拔，运行中途插上的显示器约1秒后跟上）。连续互通相机和其他外接摄像头不受影响。
 - **指示灯归属**：Daemon通过launchd启动，macOS会把摄像头使用记在`thinklight-daemon`自己名下。菜单栏只有控制中心图标上的小绿点，不会额外出现绿色摄像头胶囊图标。
@@ -182,7 +169,7 @@ thinklight config      # 当前是哪种状态，以及装了哪些音轨
 
 ThinkLight的Swift daemon在每个状态摄像头（内建摄像头，接有Studio Display时加上它的摄像头）上各启动一个`AVCaptureSession`。摄像头实际采集时，macOS会点亮与硬件联动的绿色指示灯；停止采集时指示灯熄灭。Daemon每秒核对各个AI Agent会话的状态：只要还有会话在运行就保持采集（灯亮），没有则停止采集并等待下一次会话（灯灭）。Codex token还带有transcript和turn信息，让daemon能识别被Ctrl+C打断而未触发`Stop`的回合。Daemon空闲常驻，避免会话刚开始时撞上旧进程退出而漏掉启动信号。
 
-声音挂在同一个状态跳变上，因此不需要额外的状态机：daemon用两个`AVAudioPlayer`分别持有循环曲（`numberOfLoops = -1`，无缝重复）和完成音，暗→亮时启动循环曲，亮→暗时停掉它并播一次完成音。同一次tick还会重读`unmute`写下的开关，所以设置一秒内生效，不用等daemon重启。播放器是在开关翻转时构建、而不是在灯的跳变上构建：在回合边界那一秒才解码会把提示音推迟到它本该标记的时刻之后，而拨开关是一次没有时限的主动操作。静音时daemon完全不碰音频API；打开但音轨缺失时`AVAudioPlayer`构建失败，daemon为每个缺失的音轨记一行stderr后继续——灯不该因为没有声音就罢工。
+声音挂在同一个状态跳变上，因此不需要额外的状态机：daemon用两个`AVAudioPlayer`分别持有循环曲（`numberOfLoops = -1`，无缝重复）和完成音，暗→亮时启动循环曲，亮→暗时停掉它并播一次完成音。同一次tick还会重读`unmute`写下的开关，所以设置一秒内生效；播放器在开关翻转时构建，而不是在灯的跳变上——那一秒才解码会把提示音推迟到它本该标记的时刻之后。静音时完全不碰音频API，音轨缺失时也只记一行stderr继续跑——灯不该因为没有声音就罢工。
 
 ## License
 

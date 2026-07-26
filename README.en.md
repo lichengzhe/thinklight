@@ -29,10 +29,8 @@ popups — and unlike desktop pets and status widgets, it costs zero screen real
 estate: the light sits outside your screen, visible across desktops and full
 screen.
 
-If you tend to walk away after handing off a task, you can add sound on top: a
-track loops while the agent works, and a chime plays once when it finishes.
-ThinkLight installs silent and stays that way until you run `thinklight unmute`,
-so nothing about the default experience changes.
+When you are away from the screen, you can add [sound](#sound-optional-off-by-default)
+on top — off by default, turned on with `thinklight unmute`.
 
 It is particularly useful if you:
 
@@ -103,8 +101,7 @@ This builds and installs the programs in `~/.local/bin`; run
 `thinklight blink 3` to grant camera access and test, as above.
 
 Next, configure hooks for the agent you use. After that, the light follows your
-sessions automatically; there is normally no need to run `thinklight on` or
-`thinklight off` yourself.
+sessions automatically.
 
 ### Claude Code
 
@@ -184,8 +181,6 @@ this repository; installing an update requires running `thinklight update`.
 The LED only reports where you can see it. When you hand off a task and leave
 the screen, sound covers that gap.
 
-ThinkLight installs silent. One command turns sound on:
-
 ```bash
 thinklight unmute      # a track loops while the agent works, a chime marks your turn
 thinklight mute        # silent again; the LED keeps working
@@ -196,34 +191,20 @@ Inside Claude Code the plugin offers the same three as `/thinklight:unmute`,
 `/thinklight:mute`, and `/thinklight:config`. The switch takes effect within a
 second, so `/thinklight:unmute` is audible in the very turn that runs it.
 
-The first `unmute` copies the two default tracks into place:
-
-```text
-~/.local/share/thinklight/loop.flac   loops while the agent works
-~/.local/share/thinklight/done.flac   plays once when it finishes
-```
-
-To use your own, replace either file — no rebuild needed. Any format macOS can
-decode works (FLAC, MP3, WAV, AAC, …) and the extension does not have to match;
-only the names `loop` and `done` matter. The daemon holds a track open while
-sound is on, so run `thinklight mute && thinklight unmute` to pick up a
-replacement. A later `unmute` never overwrites a track you chose; delete one to
-get the bundled default back.
-
-Installing or updating ThinkLight cannot change any of this. Installers only
-refresh `~/.local/share/thinklight/defaults/`, which is where `unmute` copies
-from — the tracks in use and the switch itself sit outside anything an installer
-writes, so an update can neither start making noise on a quiet machine nor
-replace a track you picked.
+The first `unmute` copies the two default tracks into
+`~/.local/share/thinklight/`: `loop` repeats while the agent works, `done` plays
+once when it finishes. To use your own, replace either file — any format macOS
+can decode works (FLAC, MP3, WAV, AAC, …) and the extension does not have to
+match; only the names `loop` and `done` matter. Run `thinklight mute && thinklight
+unmute` to pick up a replacement. A later `unmute` never overwrites a track you
+chose, and deleting one is how you get the bundled default back — installing or
+updating ThinkLight touches neither those files nor the switch. (Set
+`THINKLIGHT_SHARE_DIR` to keep them somewhere else.)
 
 Volume follows system volume; ThinkLight does not adjust it separately. Starting
-a new turn cuts off a completion chime that is still playing and returns to the
-loop — "your turn" goes stale the instant the next turn begins. `thinklight
-blink` runs through the same on/off path, so once sound is on that diagnostic
-plays too.
-
-Set `THINKLIGHT_SHARE_DIR` to keep the switch and the tracks somewhere else; the
-daemon and the CLI both read it.
+a new turn cuts off a completion chime that is still playing — "your turn" goes
+stale the instant the next turn begins. `thinklight blink` runs through the same
+on/off path, so once sound is on that diagnostic plays too.
 
 ## Privacy, resources, and compatibility
 
@@ -232,10 +213,11 @@ daemon and the CLI both read it.
   processing or disk storage.
 - **Resource use:** Capture uses the low-resolution preset, with no encoding or
   video storage. The daemon waits for the next session while idle, but camera
-  capture is fully stopped. While sound is on, each track is opened once and
-  buffered for playback rather than decoded into memory whole.
-- **Sound:** Tracks play entirely locally, with no network access. While muted —
-  the default — the daemon performs no audio setup at all.
+  capture is fully stopped.
+- **Sound:** Tracks play entirely locally, with no network access; while sound is
+  on each track is opened and buffered for playback rather than decoded into
+  memory whole. While muted — the default — the daemon performs no audio setup
+  at all.
 - **Video calls:** macOS allows multiple processes to share a camera, and
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
   app is using the camera, however, the LED remains on, so it cannot reflect
@@ -274,14 +256,11 @@ Sound hangs off that same state transition, so it needs no second state machine:
 the daemon holds two `AVAudioPlayer`s — the loop (`numberOfLoops = -1`, seamless
 repeat) and the chime — starting the loop on dark → lit, and on lit → dark
 stopping it and playing the chime once. The same tick re-reads the switch
-`unmute` writes, which is why the setting lands within a second instead of at
-the next daemon start. The players are built on that switch rather than on the
-light's own transition: decoding at a turn boundary would push the cue past the
-moment it exists to mark, while flipping the switch is a deliberate act with no
-deadline. Muted, the daemon touches no audio API at all; unmuted with a track
-missing, `AVAudioPlayer` construction fails, the daemon logs one stderr line per
-absent track and carries on — the light should not stop working just because
-there is no sound.
+`unmute` writes, so the setting lands within a second; the players are built on
+that switch rather than on the light's own transition, since decoding at a turn
+boundary would push the cue past the moment it exists to mark. Muted, the daemon
+touches no audio API at all, and a missing track costs one stderr line rather
+than the run — the light should not stop working just because there is no sound.
 
 ## License
 
