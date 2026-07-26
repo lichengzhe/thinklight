@@ -168,13 +168,70 @@ run_hook Stop optin off
 run_cli config bogus on > /dev/null 2>&1 && fail "an unknown config key was accepted"
 pass "the background update check is switchable and off means off"
 
-# A prebuilt install has no revision to compare and the plugin keeps it current,
-# so the check must not go to the network to learn nothing.
+# A prebuilt install has no revision, but it does have a version, and published
+# releases are something it can be compared against — the install path with no
+# update signal at all was the one most people use. Latest is injected so the
+# check the hook schedules stays off the network.
 rm -f "$STATE_DIR/revision" "$CHECK_STAMP"
-run_hook UserPromptSubmit prebuilt on
-[[ ! -e "$CHECK_STAMP" ]] || fail "an install with no revision still scheduled a check"
+printf '2.0.0\n' > "$STATE_DIR/version"
+THINKLIGHT_LATEST_VERSION=2.0.0 run_hook UserPromptSubmit prebuilt on
+[[ -f "$CHECK_STAMP" ]] || fail "a prebuilt install did not schedule a check"
 run_hook Stop prebuilt off
+pass "the background check covers a prebuilt install too"
+
+# Neither revision nor version: nothing to compare, so nothing to ask.
+rm -f "$STATE_DIR/version" "$CHECK_STAMP"
+run_hook UserPromptSubmit unknown on
+[[ ! -e "$CHECK_STAMP" ]] || fail "an unrecognised install still scheduled a check"
+run_hook Stop unknown off
 pass "the update check stays out of an install it cannot reason about"
+
+# What "latest" means, and what updating is, follow from how the install was
+# made. A prebuilt install compares versions against published releases; the
+# release lookup is stood in for so this stays offline.
+UPDATE_STATE="$TEST_ROOT/update-state"
+mkdir -p "$UPDATE_STATE"
+update_check() {
+  env THINKLIGHT_STATE_DIR="$UPDATE_STATE" THINKLIGHT_BIN_DIR="$BIN_DIR" \
+    THINKLIGHT_SHARE_DIR="$SHARE_DIR" THINKLIGHT_LATEST_VERSION="$1" \
+    "$CLI" update --check 2>&1
+}
+run_cli update --check > /dev/null 2>&1 && fail "a check ran without knowing what is installed"
+printf '2.5.0\n' > "$UPDATE_STATE/version"
+assert_eq "$(update_check 2.5.0)" "thinklight: up to date (2.5.0)"
+assert_eq "$(update_check 2.6.0)" \
+  "thinklight: update available (2.5.0 -> 2.6.0); run: thinklight update"
+# Version ordering, not string comparison: 2.10.0 is newer than 2.9.0.
+printf '2.10.0\n' > "$UPDATE_STATE/version"
+assert_eq "$(update_check 2.9.0)" "thinklight: up to date (2.10.0)"
+pass "a prebuilt install checks itself against published releases"
+
+# The unattended check names the version so the notice can be acted on, and says
+# nothing at all when there is nothing to say.
+notify_update() {
+  env THINKLIGHT_STATE_DIR="$UPDATE_STATE" THINKLIGHT_BIN_DIR="$BIN_DIR" \
+    THINKLIGHT_SHARE_DIR="$SHARE_DIR" THINKLIGHT_LATEST_VERSION="$1" \
+    THINKLIGHT_TEST_NO_NOTIFY=1 "$CLI" _check_update_notify
+}
+assert_eq "$(notify_update 2.9.0)" ""
+assert_eq "$(notify_update 2.11.0)" "Run thinklight update to install 2.11.0."
+pass "the update notice only fires when a newer release exists"
+
+# Updating a prebuilt install is running get.sh again rather than a second copy
+# of what it knows, so the only thing to pin down is that it is what gets run.
+cat > "$TEST_ROOT/update-get.sh" <<'FAKE'
+#!/bin/bash
+printf 'ran %s\n' "$*"
+FAKE
+assert_eq "$(env THINKLIGHT_STATE_DIR="$UPDATE_STATE" THINKLIGHT_BIN_DIR="$BIN_DIR" \
+  THINKLIGHT_SHARE_DIR="$SHARE_DIR" THINKLIGHT_GET_SH="$TEST_ROOT/update-get.sh" \
+  "$CLI" update)" "ran "
+# A checkout is still the source flavour, which get.sh has no part in.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$UPDATE_STATE/revision"
+env THINKLIGHT_STATE_DIR="$UPDATE_STATE" THINKLIGHT_BIN_DIR="$BIN_DIR" \
+  THINKLIGHT_SHARE_DIR="$SHARE_DIR" THINKLIGHT_GET_SH="$TEST_ROOT/update-get.sh" \
+  "$CLI" update > /dev/null 2>&1 && fail "a source install was updated by get.sh"
+pass "a prebuilt update runs get.sh, and a source install does not"
 
 # The plugin's own install is switchable the same way and in the same place: the
 # hook reads this file directly, because it has to answer the question on a

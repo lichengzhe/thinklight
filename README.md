@@ -124,10 +124,9 @@ installed yet.
 curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
 ```
 
-**Build from source.** With the Xcode Command Line Tools (`swiftc`) installed,
-this also enables `thinklight update` and its update notifications, which the
-prebuilt path does not have. The plugin recognises a source install and keeps its
-hands off it:
+**Build from source.** Needs the Xcode Command Line Tools (`swiftc`). A source
+install tracks `main` rather than published releases, and `thinklight update`
+follows it there; the plugin recognises one and keeps its hands off it:
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
@@ -191,11 +190,15 @@ thinklight update           update ThinkLight
 ```
 
 ThinkLight checks for a new version in the background at most once every 24
-hours and sends a macOS notification when one is available. The check contacts
-this repository over `git ls-remote`; installing an update requires running
-`thinklight update`. No usage data is collected or transmitted. Turn the check off
-with `thinklight config update-check off` — `thinklight update --check` keeps
-working afterwards, since a check you asked for is not a background one.
+hours and sends a macOS notification when one is available. Both the check and
+`thinklight update` follow the install they are asked about: a prebuilt install
+compares its version against the latest published release and updates by running
+`get.sh` again, a source install compares its revision against `main` over
+`git ls-remote` and updates with `git pull` and `install.sh`. Either way,
+installing the update is a command you run. No usage data is collected or
+transmitted. Turn the check off with `thinklight config update-check off` —
+`thinklight update --check` keeps working afterwards, since a check you asked for
+is not a background one.
 
 The plugin closes the other gap by itself. It updates while the programs in
 `~/.local/bin` do not, so the two could drift into a combination nobody chose:

@@ -21,7 +21,12 @@ UPDATE_CHECK_FILE="$STATE/update-check"
 # installers' to state rather than a constant this file has to remember to bump.
 VERSION_FILE="$STATE/version"
 VERSION_NOTICE_FILE="$STATE/version-notice"
-REPO_URL="https://github.com/lichengzhe/thinklight.git"
+REPO="lichengzhe/thinklight"
+REPO_URL="https://github.com/$REPO.git"
+# What a prebuilt install measures itself against and updates from: published
+# releases rather than main, because a release is what it was installed from.
+RELEASES_URL="https://github.com/$REPO/releases/latest"
+GET_SH_URL="https://raw.githubusercontent.com/$REPO/main/get.sh"
 # Sound lives here rather than in the state dir because the tracks are the
 # user's to replace. Installers only ever write defaults/; the tracks beside it
 # and the flag that switches them on belong to whoever runs `unmute`, so an
@@ -218,10 +223,52 @@ remote_revision() {
   git ls-remote "$REPO_URL" refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }'
 }
 
+latest_release() {
+  # Integration tests stand in for the network here, the way THINKLIGHT_GET_SH
+  # does for the plugin's installer.
+  [[ -n "${THINKLIGHT_LATEST_VERSION:-}" ]] && { printf '%s\n' "$THINKLIGHT_LATEST_VERSION"; return 0; }
+  # Where the redirect lands, rather than the newest tag over ls-remote: a tag is
+  # pushed before its release is built, and a check that names a version get.sh
+  # cannot download yet is worse than one that waits a few minutes.
+  curl -fsSLI -o /dev/null -w '%{url_effective}' "$RELEASES_URL" 2>/dev/null |
+    sed -n 's#.*/releases/tag/v##p'
+}
+
+# How this install was made decides both of the questions below: what latest
+# means, and what updating is. A checkout tracks main by revision; everything
+# else tracks published releases by version.
+installed_from_source() {
+  [[ -s "$REVISION_FILE" ]]
+}
+
+# Prints "current VERSION" or "behind INSTALLED LATEST". Returns 1 when the
+# installed version is unrecorded and 2 when GitHub cannot be reached, so a
+# caller can tell the two silences apart. Both the check the user asks for and
+# the unattended one route through here, and so cannot disagree.
+release_status() {
+  local installed remote
+  installed=$(cat "$VERSION_FILE" 2>/dev/null)
+  [[ -n "$installed" ]] || return 1
+  remote=$(latest_release)
+  [[ -n "$remote" ]] || return 2
+  # Installed ahead of the newest published release is a real state rather than an
+  # update: the plugin installs the release matching itself, and between a version
+  # bump and its release build that version is the newer one.
+  if [[ "$installed" == "$remote" ]] ||
+    [[ "$(printf '%s\n%s\n' "$installed" "$remote" | sort -V | tail -1)" == "$installed" ]]; then
+    printf 'current %s\n' "$installed"
+  else
+    printf 'behind %s %s\n' "$installed" "$remote"
+  fi
+}
+
 check_update() {
+  if installed_from_source; then check_update_source; else check_update_release; fi
+}
+
+check_update_source() {
   local installed remote
   installed=$(cat "$REVISION_FILE" 2>/dev/null)
-  [[ -n "$installed" ]] || { echo "thinklight: installed revision unknown; run install.sh again" >&2; return 1; }
   remote=$(remote_revision)
   [[ -n "$remote" ]] || { echo "thinklight: could not check for updates" >&2; return 1; }
   if [[ "$installed" == "$remote" ]]; then
@@ -231,15 +278,37 @@ check_update() {
   fi
 }
 
+check_update_release() {
+  local status rc state installed remote
+  status=$(release_status)
+  rc=$?
+  if (( rc )); then
+    if (( rc == 2 )); then
+      echo "thinklight: could not check for updates" >&2
+    else
+      echo "thinklight: cannot tell which version is installed; re-run the install line from the README" >&2
+    fi
+    return 1
+  fi
+  read -r state installed remote <<< "$status"
+  if [[ "$state" == current ]]; then
+    echo "thinklight: up to date ($installed)"
+  else
+    echo "thinklight: update available ($installed -> $remote); run: thinklight update"
+  fi
+}
+
 schedule_update_check() {
   local now last=0
   # Only the unattended check is switchable. `thinklight update --check` is a
   # question the user just asked out loud, and answering it is not telemetry.
   [[ -f "$UPDATE_CHECK_OFF" ]] && return 0
-  # Nothing to compare against without a checkout: a prebuilt install has no
-  # revision, and the plugin keeps it current anyway. Asking the network a
-  # question whose answer cannot be used is worse than not asking.
-  [[ -f "$REVISION_FILE" ]] || return 0
+  # Nothing to compare against unless an installer recorded one of the two things
+  # it can: a checkout's revision or a release's version. Asking the network a
+  # question whose answer cannot be used is worse than not asking. An install
+  # the plugin keeps current answers "up to date" and stays quiet, which is
+  # cheaper than leaving a get.sh install with no signal at all.
+  [[ -s "$REVISION_FILE" || -s "$VERSION_FILE" ]] || return 0
   now=$(date +%s)
   [[ -f "$UPDATE_CHECK_FILE" ]] && last=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null)
   [[ "$last" =~ ^[0-9]+$ ]] || last=0
@@ -249,6 +318,35 @@ schedule_update_check() {
 }
 
 perform_update() {
+  if installed_from_source; then perform_update_source; else perform_update_release; fi
+}
+
+perform_update_release() {
+  local installer tmp= rc
+  [[ -s "$VERSION_FILE" ]] || {
+    echo "thinklight: cannot tell how this was installed; re-run the install line from the README" >&2
+    return 1
+  }
+  installer=${THINKLIGHT_GET_SH:-}
+  if [[ -z "$installer" ]]; then
+    tmp=$(mktemp "${TMPDIR:-/tmp}/thinklight-get.XXXXXX") || return 1
+    curl -fsSL "$GET_SH_URL" -o "$tmp" || {
+      rm -f "$tmp"
+      echo "thinklight: could not download the installer" >&2
+      return 1
+    }
+    installer=$tmp
+  fi
+  # get.sh is not reimplemented here. It is the one place that knows the layout —
+  # which files go where, which of them an update must never touch, how to replace
+  # a daemon that is running — so updating a prebuilt install is running it again.
+  bash "$installer"
+  rc=$?
+  [[ -n "$tmp" ]] && rm -f "$tmp"
+  return $rc
+}
+
+perform_update_source() {
   local source branch
   source=$(cat "$SOURCE_FILE" 2>/dev/null)
   [[ -n "$source" && -d "$source/.git" && -x "$source/install.sh" ]] || {
@@ -414,11 +512,21 @@ case "${1:-status}" in
     if [[ "${2:-}" == "--check" ]]; then check_update; else perform_update; fi
     ;;
   _check_update_notify)
-    installed=$(cat "$REVISION_FILE" 2>/dev/null)
-    remote=$(remote_revision)
-    if [[ -n "$installed" && -n "$remote" && "$installed" != "$remote" ]]; then
-      /usr/bin/osascript -e 'display notification "Run thinklight update to install it." with title "ThinkLight update available"' >/dev/null 2>&1
+    if installed_from_source; then
+      installed=$(cat "$REVISION_FILE" 2>/dev/null)
+      remote=$(remote_revision)
+      [[ -n "$remote" && "$installed" != "$remote" ]] || exit 0
+      detail="Run thinklight update to install it."
+    else
+      read -r state installed remote <<< "$(release_status)"
+      [[ "$state" == behind ]] || exit 0
+      detail="Run thinklight update to install $remote."
     fi
+    # Integration tests read the notice instead of watching for a banner. Printing
+    # is safe here where _version_notify cannot risk it: this runs detached from
+    # any hook, so its stdout goes nowhere near Claude's context.
+    [[ "${THINKLIGHT_TEST_NO_NOTIFY:-}" == "1" ]] && { printf '%s\n' "$detail"; exit 0; }
+    /usr/bin/osascript -e "display notification \"$detail\" with title \"ThinkLight update available\"" >/dev/null 2>&1
     ;;
   _version_notify)
     # The Claude Code plugin updates itself; the binaries in ~/.local/bin do
@@ -439,12 +547,13 @@ case "${1:-status}" in
     [[ "$(cat "$VERSION_NOTICE_FILE" 2>/dev/null)" != "$plugin_version" ]] || exit 0
     mkdir -p "$STATE" || exit 0
     printf '%s\n' "$plugin_version" > "$VERSION_NOTICE_FILE"
-    if [[ -f "$SOURCE_FILE" ]]; then
-      how="Run thinklight update to catch up."
-    elif [[ -f "$BOOTSTRAP_OFF" ]]; then
+    # `thinklight update` is the answer for either install, so the only case that
+    # needs its own advice is bootstrap being switched off on a prebuilt install:
+    # switching it back on is less work than updating by hand every release.
+    if [[ -f "$BOOTSTRAP_OFF" ]] && [[ ! -f "$SOURCE_FILE" ]]; then
       how="Run thinklight config bootstrap on to let the plugin catch them up."
     else
-      how="Re-run the install line from the README to catch up."
+      how="Run thinklight update to catch up."
     fi
     # Integration tests exercise the drift bookkeeping without popping banners.
     [[ "${THINKLIGHT_TEST_NO_NOTIFY:-}" == "1" ]] && exit 0

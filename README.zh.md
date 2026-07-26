@@ -91,7 +91,7 @@ macOS摄像头授权与Codex hook信任仍需要你亲自确认。
 curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
 ```
 
-**从源码构建。** 装有Xcode Command Line Tools（`swiftc`）的话，这种方式还能启用预编译版本没有的`thinklight update`和更新通知；插件能认出源码安装，不会去碰它：
+**从源码构建。** 需要Xcode Command Line Tools（`swiftc`）。源码安装跟的是`main`而不是发布版，`thinklight update`也跟着走那条线；插件能认出源码安装，不会去碰它：
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
@@ -144,7 +144,7 @@ thinklight update --check   检查是否有新版
 thinklight update           更新 ThinkLight
 ```
 
-ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库（`git ls-remote`），安装更新需要手动运行`thinklight update`。不采集也不上传任何使用数据。不想要的话`thinklight config update-check off`可以关掉——关掉之后`thinklight update --check`仍然可用，那是你主动问的，不算后台行为。
+ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查和`thinklight update`都按安装方式办事：预编译安装比对自己的版本和最新的发布版，更新就是再跑一次`get.sh`；源码安装比对自己的修订和`main`（`git ls-remote`），更新则是`git pull`加`install.sh`。两种方式下，装上更新都是你自己运行的一条命令。不采集也不上传任何使用数据。不想要的话`thinklight config update-check off`可以关掉——关掉之后`thinklight update --check`仍然可用，那是你主动问的，不算后台行为。
 
 另一道缝由插件自己合上：插件会自动更新，而`~/.local/bin`里的程序不会，两者本可能漂移成一个谁都没选择过的组合——新hooks配旧CLI。插件在会话开始时比对双方版本，不一致就下载并装上与自己配套的程序，然后发通知说明做了什么。每个插件版本只尝试一次，做了什么都会告诉你；有两种情况它不越权替你决定：源码安装仍由`thinklight update`说话，而`thinklight config bootstrap off`会让它退回从前那样只提醒。
 
