@@ -262,13 +262,49 @@ FileHandle.standardOutput.write(
         .data(using: .utf8)!
 )
 
+// The LED only reports where you can see it; the soundtrack reports anywhere in
+// the room. Tracks live next to the install rather than inside the binary, so
+// swapping one is a file copy instead of a rebuild.
+let assetsDir = ProcessInfo.processInfo.environment["THINKLIGHT_ASSETS_DIR"].map {
+    URL(fileURLWithPath: $0, isDirectory: true)
+} ?? FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".local/share/thinklight", isDirectory: true)
+
+// Decoded once at startup. Building a FLAC player on the turn boundary would
+// push the cue past the moment it exists to mark, and a missing file is not
+// worth refusing to run over — the light still works without the sound.
+func loadTrack(_ name: String, loops: Int) -> AVAudioPlayer? {
+    let url = assetsDir.appendingPathComponent(name)
+    guard let player = try? AVAudioPlayer(contentsOf: url) else {
+        fputs("thinklight: no audio at \(url.path); running silently\n", stderr)
+        return nil
+    }
+    player.numberOfLoops = loops
+    player.prepareToPlay()
+    return player
+}
+
+let runningTrack = loadTrack("loop.flac", loops: -1)
+let doneTrack = loadTrack("done.flac", loops: 0)
+
 var lit = false
 func tick() {
     let shouldLight = anySessionRunning()
     if shouldLight {
         syncLitCameras()
+        if !lit {
+            // "You're up" goes stale the instant the next turn starts, so a new
+            // turn cuts the chime off instead of letting the two tracks overlap.
+            doneTrack?.stop()
+            doneTrack?.currentTime = 0
+            runningTrack?.currentTime = 0
+            runningTrack?.play()
+        }
     } else if lit {
         for session in sessions.values { session.stopRunning() }
+        runningTrack?.stop()
+        doneTrack?.currentTime = 0
+        doneTrack?.play()
     }
     lit = shouldLight
 }
