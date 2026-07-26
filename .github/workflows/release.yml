@@ -84,7 +84,7 @@ jobs:
         run: |
           notes="Precompiled universal (arm64 + x86_64) macOS binaries: \`thinklight\`, \`thinklight-daemon\`, and \`thinklight-check\`. Requires macOS 14+.
 
-          **Quick install** (run the same command again to update):
+          **Quick install** (already installed? \`thinklight update\`, or run this again):
 
           \`\`\`sh
           curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
