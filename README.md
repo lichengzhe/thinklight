@@ -301,6 +301,14 @@ boundary would push the cue past the moment it exists to mark. Muted, the daemon
 touches no audio API at all, and a missing track costs one stderr line rather
 than the run — the light should not stop working just because there is no sound.
 
+## Contact
+
+Bugs and feature requests are best filed as
+[issues](https://github.com/lichengzhe/thinklight/issues). For anything else,
+scan to add me on WeChat:
+
+<img src="docs/wechat-qr.png" alt="WeChat QR code" width="140">
+
 ## License
 
 MIT

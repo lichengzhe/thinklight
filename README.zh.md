@@ -181,6 +181,12 @@ ThinkLight的Swift daemon在每个状态摄像头（内建摄像头，接有Stud
 
 声音挂在同一个状态跳变上，因此不需要额外的状态机：daemon用两个`AVAudioPlayer`分别持有循环曲（`numberOfLoops = -1`，无缝重复）和完成音，暗→亮时启动循环曲，亮→暗时停掉它并播一次完成音。同一次tick还会重读`unmute`写下的开关，所以设置一秒内生效；播放器在开关翻转时构建，而不是在灯的跳变上——那一秒才解码会把提示音推迟到它本该标记的时刻之后。静音时完全不碰音频API，音轨缺失时也只记一行stderr继续跑——灯不该因为没有声音就罢工。
 
+## 联系我
+
+Bug和功能建议走[issue](https://github.com/lichengzhe/thinklight/issues)最方便，其余的可以扫码加我微信：
+
+<img src="docs/wechat-qr.png" alt="微信二维码" width="140">
+
 ## License
 
 MIT
