@@ -48,6 +48,18 @@ done
 install -m 755 "$ROOT/src/thinklight" "$PACKAGE_DIR/thinklight"
 install -m 644 "$ROOT/LICENSE" "$PACKAGE_DIR/LICENSE"
 
+# The default tracks ride along so a binary install can turn sound on without a
+# checkout. get.sh files them under defaults/, and they stay inert until
+# `thinklight unmute` asks for them.
+if [ -d "$ROOT/assets" ]; then
+  mkdir -p "$PACKAGE_DIR/assets"
+  for track in "$ROOT"/assets/loop.* "$ROOT"/assets/done.*; do
+    if [ -f "$track" ]; then
+      install -m 644 "$track" "$PACKAGE_DIR/assets/"
+    fi
+  done
+fi
+
 COPYFILE_DISABLE=1 tar -czf "$WORK_DIR/$VERSIONED_ARCHIVE" \
   -C "$WORK_DIR" "$BUNDLE"
 cp "$WORK_DIR/$VERSIONED_ARCHIVE" "$WORK_DIR/$LATEST_ARCHIVE"

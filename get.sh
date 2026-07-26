@@ -29,6 +29,18 @@ for f in thinklight thinklight-daemon thinklight-check; do
   mv -f ~/.local/bin/".$f.$$" ~/.local/bin/"$f"
 done
 
+# Default tracks only, filed where `thinklight unmute` looks for them. Anything
+# already playing, and whether sound is on at all, is left exactly as it was —
+# re-running this script to update never changes either.
+if [ -d "$tmp/assets" ]; then
+  mkdir -p ~/.local/share/thinklight/defaults
+  for track in "$tmp"/assets/loop.* "$tmp"/assets/done.*; do
+    if [ -f "$track" ]; then
+      install -m 644 "$track" ~/.local/share/thinklight/defaults/
+    fi
+  done
+fi
+
 mkdir -p ~/.local/state/thinklight
 # A prebuilt install has no git checkout: 'thinklight update' and update
 # checks are off. Updating means running this script again.

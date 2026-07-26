@@ -1,5 +1,5 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|check|update [--check]
+# thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|update [--check]
 # One light, two states: on = an agent is running, off = nothing running.
 # The daemon owns the LED; this CLI only records per-session tokens and makes
 # sure the daemon is available.
@@ -18,6 +18,13 @@ SOURCE_FILE="$STATE/source"
 REVISION_FILE="$STATE/revision"
 UPDATE_CHECK_FILE="$STATE/update-check"
 REPO_URL="https://github.com/lichengzhe/thinklight.git"
+# Sound lives here rather than in the state dir because the tracks are the
+# user's to replace. Installers only ever write defaults/; the tracks beside it
+# and the flag that switches them on belong to whoever runs `unmute`, so an
+# update can neither silence a machine nor overwrite a swapped-in track.
+SHARE="${THINKLIGHT_SHARE_DIR:-$HOME/.local/share/thinklight}"
+SOUND_FLAG="$SHARE/sound-on"
+DEFAULT_TRACKS="$SHARE/defaults"
 
 # Hooks pipe a JSON payload on stdin: session_id names the token so a
 # session's on/off pair up even across apps with different environments.
@@ -239,6 +246,62 @@ perform_update() {
   "$source/install.sh"
 }
 
+# Tracks are matched by stem, not by a fixed filename, so any format macOS can
+# decode works: drop in loop.mp3 and it plays without touching the daemon.
+track_for() {
+  local stem=$1 dir=$2 track
+  for track in "$dir/$stem".*; do
+    [[ -f "$track" ]] || continue
+    printf '%s\n' "$track"
+    return 0
+  done
+  return 1
+}
+
+print_config() {
+  local stem track
+  if [[ -f "$SOUND_FLAG" ]]; then echo "sound: on"; else echo "sound: off"; fi
+  echo "tracks: $SHARE"
+  for stem in loop done; do
+    if track=$(track_for "$stem" "$SHARE"); then
+      echo "$stem track: ${track##*/}"
+    else
+      echo "$stem track: missing"
+    fi
+  done
+}
+
+# Only fills empty slots: a track you replaced with your own survives every
+# later unmute, and deleting one is how you go back to the bundled default.
+seed_default_tracks() {
+  local stem track
+  for stem in loop done; do
+    track_for "$stem" "$SHARE" > /dev/null && continue
+    track=$(track_for "$stem" "$DEFAULT_TRACKS") || continue
+    install -m 644 "$track" "$SHARE/${track##*/}" || return 1
+  done
+}
+
+unmute_sound() {
+  mkdir -p "$SHARE" || {
+    echo "thinklight: cannot create the sound directory: $SHARE" >&2
+    return 1
+  }
+  seed_default_tracks || return 1
+  # The daemon re-reads this every tick, so the switch lands inside the turn
+  # that threw it — no restart, and nothing to remember to do afterwards.
+  : > "$SOUND_FLAG" || return 1
+  print_config
+  if ! track_for loop "$SHARE" > /dev/null || ! track_for done "$SHARE" > /dev/null; then
+    echo "thinklight: a track is missing; put loop.<ext> and done.<ext> in $SHARE" >&2
+  fi
+}
+
+mute_sound() {
+  rm -f "$SOUND_FLAG" || return 1
+  print_config
+}
+
 case "${1:-status}" in
   on)
     load_session_context || exit 1
@@ -273,6 +336,15 @@ case "${1:-status}" in
   check)
     exec "$BIN_DIR/thinklight-check"
     ;;
+  config)
+    print_config
+    ;;
+  mute)
+    mute_sound || exit 1
+    ;;
+  unmute)
+    unmute_sound || exit 1
+    ;;
   update)
     if [[ "${2:-}" == "--check" ]]; then check_update; else perform_update; fi
     ;;
@@ -290,7 +362,7 @@ case "${1:-status}" in
     if has_sessions; then ensure_daemon; fi
     ;;
   *)
-    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|update [--check]" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|update [--check]" >&2
     exit 64
     ;;
 esac

@@ -12,13 +12,18 @@ mv -f ~/.local/bin/.thinklight-daemon.$$ ~/.local/bin/thinklight-daemon
 swiftc -O thinklight-check.swift -o ~/.local/bin/.thinklight-check.$$
 mv -f ~/.local/bin/.thinklight-check.$$ ~/.local/bin/thinklight-check
 install -m 755 thinklight ~/.local/bin/thinklight
-# Tracks live in a data dir the daemon reads at startup, so replacing one only
-# needs a file copy — no rebuild, no reinstall of the binaries. They are also
-# optional: a checkout with no assets (or one whose tracks were deleted to
-# silence it) still installs, and the daemon just runs without sound.
-if compgen -G "$SCRIPT_DIR/assets/*.flac" > /dev/null; then
-  mkdir -p ~/.local/share/thinklight
-  install -m 644 "$SCRIPT_DIR"/assets/*.flac ~/.local/share/thinklight/
+# The bundled tracks land in defaults/, never beside the ones actually playing.
+# Refreshing a default is then safe, while the tracks a user swapped in and the
+# flag that turns sound on sit one directory up where no installer writes: an
+# update can neither overwrite a chosen track nor change whether a machine
+# makes noise. `thinklight unmute` is what copies a default into place.
+if [ -d "$SCRIPT_DIR/assets" ]; then
+  mkdir -p ~/.local/share/thinklight/defaults
+  for track in "$SCRIPT_DIR"/assets/loop.* "$SCRIPT_DIR"/assets/done.*; do
+    if [ -f "$track" ]; then
+      install -m 644 "$track" ~/.local/share/thinklight/defaults/
+    fi
+  done
 fi
 mkdir -p ~/.local/state/thinklight
 printf '%s\n' "$SCRIPT_DIR" > ~/.local/state/thinklight/source

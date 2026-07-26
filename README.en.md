@@ -6,7 +6,7 @@ space — switch apps, go full screen, and still know the moment the AI is done.
 ThinkLight uses the green LED beside the Mac's built-in camera to show the
 status of Claude Code and Codex CLI, with optional sound to match:
 
-| State | Light | Sound (optional) |
+| State | Light | Sound (off by default) |
 | --- | --- | --- |
 | The AI is working — go do something else | On | A track loops |
 | It's done — your turn | Off | A chime plays once |
@@ -31,8 +31,8 @@ screen.
 
 If you tend to walk away after handing off a task, you can add sound on top: a
 track loops while the agent works, and a chime plays once when it finishes.
-Sound is optional — install no tracks and ThinkLight stays completely silent,
-exactly as before.
+ThinkLight installs silent and stays that way until you run `thinklight unmute`,
+so nothing about the default experience changes.
 
 It is particularly useful if you:
 
@@ -115,6 +115,12 @@ This repository also provides a Claude Code plugin marketplace:
 /plugin install thinklight@thinklight
 ```
 
+Besides the hooks, the plugin adds three commands for the optional
+[sound](#sound-optional-off-by-default) — `/thinklight:unmute`,
+`/thinklight:mute`, and `/thinklight:config`. All three are yours to invoke
+only: Claude never triggers them on its own, and they add nothing to its
+context.
+
 If you prefer not to use the plugin, merge these hooks into
 `~/.claude/settings.json`:
 
@@ -163,6 +169,9 @@ thinklight off [--force]    deregister the current session
 thinklight status           print on or off
 thinklight blink [seconds]  turn on for the specified time, then turn off
 thinklight check            read the camera hardware state reported by CoreMediaIO
+thinklight config           print the sound setting and the installed tracks
+thinklight unmute           turn sound on (installs the default tracks on first use)
+thinklight mute             turn sound off, keeping the tracks in place
 thinklight update --check   check for a new version
 thinklight update           update ThinkLight
 ```
@@ -171,31 +180,51 @@ ThinkLight checks for a new version in the background at most once every 24
 hours and sends a macOS notification when one is available. The check contacts
 this repository; installing an update requires running `thinklight update`.
 
-## Sound (optional)
+## Sound (optional, off by default)
 
 The LED only reports where you can see it. When you hand off a task and leave
 the screen, sound covers that gap.
 
-Tracks live in `~/.local/share/thinklight/` and are read when the daemon starts:
+ThinkLight installs silent. One command turns sound on:
+
+```bash
+thinklight unmute      # a track loops while the agent works, a chime marks your turn
+thinklight mute        # silent again; the LED keeps working
+thinklight config      # which of the two is in effect, and which tracks are installed
+```
+
+Inside Claude Code the plugin offers the same three as `/thinklight:unmute`,
+`/thinklight:mute`, and `/thinklight:config`. The switch takes effect within a
+second, so `/thinklight:unmute` is audible in the very turn that runs it.
+
+The first `unmute` copies the two default tracks into place:
 
 ```text
 ~/.local/share/thinklight/loop.flac   loops while the agent works
 ~/.local/share/thinklight/done.flac   plays once when it finishes
 ```
 
-The repository's `assets/` directory ships two default tracks, and `install.sh`
-copies them to the paths above. To use your own, just replace the two files —
-no rebuild needed; then run `thinklight off --force` so the daemon exits, and it
-picks up the new tracks when the next session starts. Any format macOS can
-decode works (FLAC, MP3, WAV, AAC, …), but keep the names `loop` and `done`.
+To use your own, replace either file — no rebuild needed. Any format macOS can
+decode works (FLAC, MP3, WAV, AAC, …) and the extension does not have to match;
+only the names `loop` and `done` matter. The daemon holds a track open while
+sound is on, so run `thinklight mute && thinklight unmute` to pick up a
+replacement. A later `unmute` never overwrites a track you chose; delete one to
+get the bundled default back.
 
-To turn sound off, delete the two files: with no tracks to load the daemon logs
-one line to stderr and carries on, and the LED works as usual. `install.sh` also
-skips the copy when `assets/` is absent.
+Installing or updating ThinkLight cannot change any of this. Installers only
+refresh `~/.local/share/thinklight/defaults/`, which is where `unmute` copies
+from — the tracks in use and the switch itself sit outside anything an installer
+writes, so an update can neither start making noise on a quiet machine nor
+replace a track you picked.
 
 Volume follows system volume; ThinkLight does not adjust it separately. Starting
 a new turn cuts off a completion chime that is still playing and returns to the
-loop — "your turn" goes stale the instant the next turn begins.
+loop — "your turn" goes stale the instant the next turn begins. `thinklight
+blink` runs through the same on/off path, so once sound is on that diagnostic
+plays too.
+
+Set `THINKLIGHT_SHARE_DIR` to keep the switch and the tracks somewhere else; the
+daemon and the CLI both read it.
 
 ## Privacy, resources, and compatibility
 
@@ -204,10 +233,10 @@ loop — "your turn" goes stale the instant the next turn begins.
   processing or disk storage.
 - **Resource use:** Capture uses the low-resolution preset, with no encoding or
   video storage. The daemon waits for the next session while idle, but camera
-  capture is fully stopped. When tracks are installed, they are decoded once at
-  daemon startup and held in memory.
-- **Sound:** Tracks play entirely locally, with no network access. With no
-  tracks installed the daemon performs no audio setup at all.
+  capture is fully stopped. While sound is on, each track is opened once and
+  buffered for playback rather than decoded into memory whole.
+- **Sound:** Tracks play entirely locally, with no network access. While muted —
+  the default — the daemon performs no audio setup at all.
 - **Video calls:** macOS allows multiple processes to share a camera, and
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
   app is using the camera, however, the LED remains on, so it cannot reflect
@@ -245,11 +274,15 @@ process is exiting.
 Sound hangs off that same state transition, so it needs no second state machine:
 the daemon holds two `AVAudioPlayer`s — the loop (`numberOfLoops = -1`, seamless
 repeat) and the chime — starting the loop on dark → lit, and on lit → dark
-stopping it and playing the chime once. Both players are built at daemon
-startup; decoding on the transition itself would push the cue past the moment it
-exists to mark. When a track is missing, `AVAudioPlayer` construction fails, the
-daemon logs one stderr line and carries on — the light should not stop working
-just because there is no sound.
+stopping it and playing the chime once. The same tick re-reads the switch
+`unmute` writes, which is why the setting lands within a second instead of at
+the next daemon start. The players are built on that switch rather than on the
+light's own transition: decoding at a turn boundary would push the cue past the
+moment it exists to mark, while flipping the switch is a deliberate act with no
+deadline. Muted, the daemon touches no audio API at all; unmuted with a track
+missing, `AVAudioPlayer` construction fails, the daemon logs one stderr line per
+absent track and carries on — the light should not stop working just because
+there is no sound.
 
 ## License
 
