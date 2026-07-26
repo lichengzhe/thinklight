@@ -41,7 +41,7 @@ run_hook() {
   shift 2
   printf '{"hook_event_name":"%s","session_id":"%s"}\n' "$event" "$session" \
     | env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$STATE_DIR" \
-        "$CLI" "$@"
+        THINKLIGHT_SHARE_DIR="$SHARE_DIR" "$CLI" "$@"
 }
 
 run_codex_hook() {
@@ -50,7 +50,7 @@ run_codex_hook() {
   printf '{"hook_event_name":"%s","session_id":"%s","turn_id":"%s","transcript_path":"%s"}\n' \
     "$event" "$session" "$turn" "$transcript" \
     | env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$STATE_DIR" \
-        "$CLI" "$@"
+        THINKLIGHT_SHARE_DIR="$SHARE_DIR" "$CLI" "$@"
 }
 
 mkdir -p "$BIN_DIR"
@@ -145,6 +145,25 @@ assert_eq "$(run_cli config | sed -n '4p')" "done track: done.mp3"
 run_cli unmute > /dev/null
 [[ ! -e "$SHARE_DIR/done.flac" ]] || fail "unmute re-added a default over a differently named track"
 pass "a track of any extension fills its slot"
+
+# The unattended check reaches the network, so it has to be switchable — and
+# switchable in a place installers do not write, or an update would silently
+# turn it back on. An explicitly requested check is not covered: the user just
+# asked the question out loud.
+assert_eq "$(run_cli config | tail -1)" "update-check: on"
+assert_eq "$(run_cli config update-check off | tail -1)" "update-check: off"
+[[ -f "$SHARE_DIR/update-check-off" ]] || fail "the opt-out was not recorded beside the other settings"
+CHECK_STAMP="$STATE_DIR/update-check"
+rm -f "$CHECK_STAMP"
+run_hook UserPromptSubmit optout on
+[[ ! -e "$CHECK_STAMP" ]] || fail "an opted-out install still scheduled a check"
+run_hook Stop optout off
+assert_eq "$(run_cli config update-check on | tail -1)" "update-check: on"
+run_hook UserPromptSubmit optin on
+[[ -f "$CHECK_STAMP" ]] || fail "turning the check back on did not schedule it"
+run_hook Stop optin off
+run_cli config bogus on > /dev/null 2>&1 && fail "an unknown config key was accepted"
+pass "the background update check is switchable and off means off"
 
 # The bug this pins down: an update must not be able to start making noise on a
 # quiet machine or replace a track someone chose. install.sh writes defaults/

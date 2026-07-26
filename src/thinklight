@@ -1,5 +1,5 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|version|update [--check]
+# thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|version|update [--check]
 # One light, two states: on = an agent is running, off = nothing running.
 # The daemon owns the LED; this CLI only records per-session tokens and makes
 # sure the daemon is available.
@@ -29,6 +29,10 @@ REPO_URL="https://github.com/lichengzhe/thinklight.git"
 SHARE="${THINKLIGHT_SHARE_DIR:-$HOME/.local/share/thinklight}"
 SOUND_FLAG="$SHARE/sound-on"
 DEFAULT_TRACKS="$SHARE/defaults"
+# Settings a user chose belong beside the tracks, out of reach of installers,
+# for the same reason: an update must not be able to switch the background
+# update check back on for someone who turned it off.
+UPDATE_CHECK_OFF="$SHARE/update-check-off"
 
 # Hooks pipe a JSON payload on stdin: session_id names the token so a
 # session's on/off pair up even across apps with different environments.
@@ -225,6 +229,9 @@ check_update() {
 
 schedule_update_check() {
   local now last=0
+  # Only the unattended check is switchable. `thinklight update --check` is a
+  # question the user just asked out loud, and answering it is not telemetry.
+  [[ -f "$UPDATE_CHECK_OFF" ]] && return 0
   now=$(date +%s)
   [[ -f "$UPDATE_CHECK_FILE" ]] && last=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null)
   [[ "$last" =~ ^[0-9]+$ ]] || last=0
@@ -273,6 +280,32 @@ print_config() {
       echo "$stem track: missing"
     fi
   done
+  if [[ -f "$UPDATE_CHECK_OFF" ]]; then echo "update-check: off"; else echo "update-check: on"; fi
+}
+
+# `mute`/`unmute` stay as the shortcut for the setting people touch; this is the
+# same switches by name, and the only way to reach the ones without a verb.
+set_config() {
+  local key=$1 value=$2
+  case "$key:$value" in
+    sound:on) unmute_sound; return ;;
+    sound:off) mute_sound; return ;;
+    update-check:on)
+      rm -f "$UPDATE_CHECK_OFF" || return 1
+      ;;
+    update-check:off)
+      mkdir -p "$SHARE" || {
+        echo "thinklight: cannot create the settings directory: $SHARE" >&2
+        return 1
+      }
+      : > "$UPDATE_CHECK_OFF" || return 1
+      ;;
+    *)
+      echo "thinklight: usage: thinklight config [sound|update-check] [on|off]" >&2
+      return 64
+      ;;
+  esac
+  print_config
 }
 
 # Only fills empty slots: a track you replaced with your own survives every
@@ -344,7 +377,11 @@ case "${1:-status}" in
     cat "$VERSION_FILE" 2>/dev/null || { echo "unknown"; exit 1; }
     ;;
   config)
-    print_config
+    if [[ -n "${2:-}" ]]; then
+      set_config "$2" "${3:-}" || exit $?
+    else
+      print_config
+    fi
     ;;
   mute)
     mute_sound || exit 1
@@ -395,7 +432,7 @@ case "${1:-status}" in
     if has_sessions; then ensure_daemon; fi
     ;;
   *)
-    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|version|update [--check]" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|version|update [--check]" >&2
     exit 64
     ;;
 esac

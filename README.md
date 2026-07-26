@@ -131,14 +131,15 @@ thinklight status           输出 on 或 off
 thinklight blink [秒]       亮起指定时间后熄灭
 thinklight check            读取 CoreMediaIO 报告的摄像头硬件状态
 thinklight version          输出已安装程序的版本
-thinklight config           输出声音开关状态和已安装的音轨
+thinklight config           输出全部设置：声音、已装音轨、更新检查
+thinklight config KEY VALUE 改一项设置：sound 或 update-check，取 on 或 off
 thinklight unmute           打开声音（首次会自动装上默认音轨）
 thinklight mute             关闭声音，音轨文件保留
 thinklight update --check   检查是否有新版
 thinklight update           更新 ThinkLight
 ```
 
-ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库，安装更新需要手动运行`thinklight update`。
+ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库（`git ls-remote`），安装更新需要手动运行`thinklight update`。这是ThinkLight唯一的联网行为，不采集也不上传任何使用数据。不想要的话`thinklight config update-check off`可以关掉——关掉之后`thinklight update --check`仍然可用，那是你主动问的，不算后台行为。
 
 装了Claude Code插件的话还多一层保障：插件会自动更新，而`~/.local/bin`里的程序不会，两者可能漂移成一个谁都没选择过的组合——新hooks配旧CLI。插件在会话开始时比对双方版本，不一致就发一条通知（每个版本只提醒一次）。它只提醒，不会自己动手装。
 

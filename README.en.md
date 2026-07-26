@@ -166,7 +166,8 @@ thinklight status           print on or off
 thinklight blink [seconds]  turn on for the specified time, then turn off
 thinklight check            read the camera hardware state reported by CoreMediaIO
 thinklight version          print the installed programs' version
-thinklight config           print the sound setting and the installed tracks
+thinklight config           print every setting: sound, tracks, update check
+thinklight config KEY VALUE change one setting: sound or update-check, on or off
 thinklight unmute           turn sound on (installs the default tracks on first use)
 thinklight mute             turn sound off, keeping the tracks in place
 thinklight update --check   check for a new version
@@ -175,7 +176,11 @@ thinklight update           update ThinkLight
 
 ThinkLight checks for a new version in the background at most once every 24
 hours and sends a macOS notification when one is available. The check contacts
-this repository; installing an update requires running `thinklight update`.
+this repository over `git ls-remote`; installing an update requires running
+`thinklight update`. That check is the only thing ThinkLight sends over the
+network, and no usage data is collected or transmitted. Turn it off with
+`thinklight config update-check off` — `thinklight update --check` keeps working
+afterwards, since a check you asked for is not a background one.
 
 The Claude Code plugin adds a second safeguard. The plugin updates itself while
 the programs in `~/.local/bin` do not, so the two can drift into a combination
