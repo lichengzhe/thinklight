@@ -59,7 +59,8 @@ jobs:
         shell: bash
         run: |
           bash -n get.sh install.sh src/thinklight scripts/build-release.sh \
-            plugin/scripts/version-check.sh tests/test-thinklight.sh
+            plugin/scripts/version-check.sh plugin/scripts/install-programs.sh \
+            tests/test-thinklight.sh
           for json_file in \
             .claude-plugin/marketplace.json \
             plugin/.claude-plugin/plugin.json \

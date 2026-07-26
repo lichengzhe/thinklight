@@ -33,6 +33,10 @@ DEFAULT_TRACKS="$SHARE/defaults"
 # for the same reason: an update must not be able to switch the background
 # update check back on for someone who turned it off.
 UPDATE_CHECK_OFF="$SHARE/update-check-off"
+# Read by the plugin's SessionStart hook before this CLI necessarily exists, so
+# it is a file rather than something only the CLI can answer. THINKLIGHT_NO_BOOTSTRAP
+# is the same switch for a machine that has never run thinklight at all.
+BOOTSTRAP_OFF="$SHARE/bootstrap-off"
 
 # Hooks pipe a JSON payload on stdin: session_id names the token so a
 # session's on/off pair up even across apps with different environments.
@@ -232,6 +236,10 @@ schedule_update_check() {
   # Only the unattended check is switchable. `thinklight update --check` is a
   # question the user just asked out loud, and answering it is not telemetry.
   [[ -f "$UPDATE_CHECK_OFF" ]] && return 0
+  # Nothing to compare against without a checkout: a prebuilt install has no
+  # revision, and the plugin keeps it current anyway. Asking the network a
+  # question whose answer cannot be used is worse than not asking.
+  [[ -f "$REVISION_FILE" ]] || return 0
   now=$(date +%s)
   [[ -f "$UPDATE_CHECK_FILE" ]] && last=$(cat "$UPDATE_CHECK_FILE" 2>/dev/null)
   [[ "$last" =~ ^[0-9]+$ ]] || last=0
@@ -280,7 +288,18 @@ print_config() {
       echo "$stem track: missing"
     fi
   done
+  if [[ -f "$BOOTSTRAP_OFF" ]]; then echo "bootstrap: off"; else echo "bootstrap: on"; fi
   if [[ -f "$UPDATE_CHECK_OFF" ]]; then echo "update-check: off"; else echo "update-check: on"; fi
+}
+
+# Every "off" is the same shape: a marker in the user's own directory, created
+# only when it has somewhere to live.
+switch_off() {
+  mkdir -p "$SHARE" || {
+    echo "thinklight: cannot create the settings directory: $SHARE" >&2
+    return 1
+  }
+  : > "$1"
 }
 
 # `mute`/`unmute` stay as the shortcut for the setting people touch; this is the
@@ -290,18 +309,20 @@ set_config() {
   case "$key:$value" in
     sound:on) unmute_sound; return ;;
     sound:off) mute_sound; return ;;
+    bootstrap:on)
+      rm -f "$BOOTSTRAP_OFF" || return 1
+      ;;
+    bootstrap:off)
+      switch_off "$BOOTSTRAP_OFF" || return 1
+      ;;
     update-check:on)
       rm -f "$UPDATE_CHECK_OFF" || return 1
       ;;
     update-check:off)
-      mkdir -p "$SHARE" || {
-        echo "thinklight: cannot create the settings directory: $SHARE" >&2
-        return 1
-      }
-      : > "$UPDATE_CHECK_OFF" || return 1
+      switch_off "$UPDATE_CHECK_OFF" || return 1
       ;;
     *)
-      echo "thinklight: usage: thinklight config [sound|update-check] [on|off]" >&2
+      echo "thinklight: usage: thinklight config [sound|bootstrap|update-check] [on|off]" >&2
       return 64
       ;;
   esac
@@ -403,8 +424,10 @@ case "${1:-status}" in
     # The Claude Code plugin updates itself; the binaries in ~/.local/bin do
     # not. Left alone the two drift into a combination nobody chose — new hooks
     # calling an old CLI — and the user has no way to see it, because the drift
-    # arrived through an update they never ran. The plugin's SessionStart hook
-    # reports its own version here so the gap becomes visible.
+    # arrived through an update they never ran. The plugin normally closes that
+    # gap by installing the programs itself; this is what it falls back to when
+    # it must not — a source checkout owns the install, bootstrap is off, or the
+    # download failed — so the gap is at least visible.
     #
     # Notified rather than printed: SessionStart stdout becomes Claude's
     # context, and a maintenance notice does not belong there. Once per version,
@@ -418,6 +441,8 @@ case "${1:-status}" in
     printf '%s\n' "$plugin_version" > "$VERSION_NOTICE_FILE"
     if [[ -f "$SOURCE_FILE" ]]; then
       how="Run thinklight update to catch up."
+    elif [[ -f "$BOOTSTRAP_OFF" ]]; then
+      how="Run thinklight config bootstrap on to let the plugin catch them up."
     else
       how="Re-run the install line from the README to catch up."
     fi

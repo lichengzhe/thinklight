@@ -13,7 +13,8 @@ status of Claude Code and Codex CLI, with optional sound to match:
 | The AI is working — go do something else | On | A track loops |
 | It's done — your turn | Off | A chime plays once |
 
-> **Fastest setup:** [Paste one prompt and let Claude Code or Codex install and configure it.](#let-an-agent-install-it-recommended)
+> **Setup is one plugin install** — [two commands in Claude Code](#claude-code),
+> and it fetches the rest itself.
 
 ## Why it helps
 
@@ -45,32 +46,17 @@ and goes out once they have all finished.
 
 You need a Mac with a built-in camera, running macOS 14 or later.
 
-Two pieces: the **plugin**, which tells the light when your agent starts and
-stops, and the **programs**, which hold the camera so the LED comes on. The
-plugin keeps itself up to date; the programs are installed once.
+There are two pieces — the **plugin**, which tells the light when your agent
+starts and stops, and the **programs**, which hold the camera so the LED comes on
+— but you only install one. On its first session the plugin fetches the programs
+that match it into `~/.local/bin` and tells you it did; later plugin updates
+bring them along the same way. [Anything about that you would rather do
+yourself](#installing-the-programs-yourself) still works, and turning it off is
+one command.
 
-### Let an agent install it (recommended)
+### Claude Code
 
-Paste this into Claude Code, Codex, or another coding agent that is **running
-on this Mac and can use its terminal**:
-
-```text
-Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
-First read README.md and get.sh to confirm the installation scope. Prefer the plugin: run
-`claude plugin marketplace add lichengzhe/thinklight` and `claude plugin install thinklight@thinklight`
-for Claude Code, and the codex plugin equivalents for Codex CLI, falling back to hooks in
-~/.claude/settings.json only if the plugin route fails. Then run get.sh to install the programs
-(or clone the repository and run install.sh to build from source), and verify with
-~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to
-click when macOS asks for camera access or Codex asks me to trust the hooks. When finished, report
-the install location, hook configuration, and verification results. Do not change unrelated settings.
-```
-
-You still need to personally approve macOS camera access and Codex hook trust.
-
-### Claude Code plugin
-
-Doing it yourself is two commands in Claude Code:
+Two commands, and nothing after them:
 
 ```text
 /plugin marketplace add lichengzhe/thinklight
@@ -81,23 +67,21 @@ That configures the hooks and adds `/thinklight:unmute`, `/thinklight:mute`, and
 `/thinklight:config` for the optional [sound](#sound-optional-off-by-default).
 All three are yours to invoke only; Claude never triggers them on its own.
 
-Then install the programs and grant camera access. macOS asks on the second
-line, and the LED stays on for three seconds once you allow it:
+Start a session and the plugin installs the programs in the background —
+precompiled universal binaries (Apple Silicon and Intel) from
+[Releases](https://github.com/lichengzhe/thinklight/releases) — then posts a
+notification when they are in place. The first time the light comes on, macOS asks
+for camera access; allow it and the LED follows your agent from then on. To see
+the whole thing work at once:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
-~/.local/bin/thinklight blink 3
+~/.local/bin/thinklight blink 3   # the LED lights for three seconds
 ```
-
-The script downloads precompiled universal binaries (Apple Silicon and Intel)
-from [Releases](https://github.com/lichengzhe/thinklight/releases) into
-`~/.local/bin`. Re-run the same line to update them; the plugin sends a
-notification when they have fallen behind it.
 
 ### Codex CLI
 
-Codex CLI 0.145 and later installs the same hooks from the same marketplace,
-and needs the same programs from the step above:
+Codex CLI 0.145 and later installs the same hooks, with the same programs
+arriving the same way:
 
 ```bash
 codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
@@ -105,11 +89,45 @@ codex plugin add thinklight@thinklight
 codex   # confirm the hook trust prompt in an interactive session
 ```
 
-### Other ways to install
+### Let an agent install it
+
+Paste this into Claude Code, Codex, or another coding agent that is **running
+on this Mac and can use its terminal**:
+
+```text
+Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
+First read README.md, get.sh, and plugin/scripts/install-programs.sh to confirm the installation
+scope. Prefer the plugin: run `claude plugin marketplace add lichengzhe/thinklight` and
+`claude plugin install thinklight@thinklight` for Claude Code, and the codex plugin equivalents for
+Codex CLI, falling back to hooks in ~/.claude/settings.json only if the plugin route fails. The
+plugin installs the programs itself at session start; if they are not in ~/.local/bin yet, run
+get.sh (or clone the repository and run install.sh to build from source). Verify with
+~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to
+click when macOS asks for camera access or Codex asks me to trust the hooks. When finished, report
+the install location, hook configuration, and verification results. Do not change unrelated settings.
+```
+
+You still need to personally approve macOS camera access and Codex hook trust.
+
+### Installing the programs yourself
+
+Any of these leaves the plugin nothing to fetch. The automatic install only ever
+runs while `~/.local/bin` is missing the programs or holding older ones, so
+installing them first — by any route below — is all it takes to opt out in
+practice. To rule it out for good, `thinklight config bootstrap off`, or
+`THINKLIGHT_NO_BOOTSTRAP=1` in the environment your agent starts in if nothing is
+installed yet.
+
+**Prebuilt, in one line.** The same download the plugin would have done:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
+```
 
 **Build from source.** With the Xcode Command Line Tools (`swiftc`) installed,
 this also enables `thinklight update` and its update notifications, which the
-prebuilt path does not have:
+prebuilt path does not have. The plugin recognises a source install and keeps its
+hands off it:
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
@@ -121,8 +139,11 @@ cd thinklight
 quarantine with `xattr -d com.apple.quarantine`, and put the three programs in
 `~/.local/bin`.
 
-**Hooks by hand.** Without the plugin you get no `/thinklight:*` commands and no
-automatic hook updates, but the hooks themselves are four lines in
+### Hooks without the plugin
+
+Skipping the plugin costs you the `/thinklight:*` commands, automatic hook
+updates, and the automatic program install above — the programs are then yours to
+install and update. The hooks themselves are four lines in
 `~/.claude/settings.json`:
 
 ```json
@@ -161,8 +182,8 @@ thinklight status           print on or off
 thinklight blink [seconds]  turn on for the specified time, then turn off
 thinklight check            read the camera hardware state reported by CoreMediaIO
 thinklight version          print the installed programs' version
-thinklight config           print every setting: sound, tracks, update check
-thinklight config KEY VALUE change one setting: sound or update-check, on or off
+thinklight config           print every setting: sound, tracks, bootstrap, update check
+thinklight config KEY VALUE change one setting: sound, bootstrap, or update-check, on or off
 thinklight unmute           turn sound on (installs the default tracks on first use)
 thinklight mute             turn sound off, keeping the tracks in place
 thinklight update --check   check for a new version
@@ -172,16 +193,18 @@ thinklight update           update ThinkLight
 ThinkLight checks for a new version in the background at most once every 24
 hours and sends a macOS notification when one is available. The check contacts
 this repository over `git ls-remote`; installing an update requires running
-`thinklight update`. That check is the only thing ThinkLight sends over the
-network, and no usage data is collected or transmitted. Turn it off with
-`thinklight config update-check off` — `thinklight update --check` keeps working
-afterwards, since a check you asked for is not a background one.
+`thinklight update`. No usage data is collected or transmitted. Turn the check off
+with `thinklight config update-check off` — `thinklight update --check` keeps
+working afterwards, since a check you asked for is not a background one.
 
-The Claude Code plugin adds a second safeguard. The plugin updates itself while
-the programs in `~/.local/bin` do not, so the two can drift into a combination
-nobody chose — new hooks calling an old CLI. At session start the plugin
-compares the two versions and sends one notification per version when they
-differ. It reports the gap; it never installs anything on its own.
+The plugin closes the other gap by itself. It updates while the programs in
+`~/.local/bin` do not, so the two could drift into a combination nobody chose:
+new hooks calling an old CLI. At session start it compares the two versions and,
+when they differ, downloads and installs the programs for its own version, then
+notifies you. It tries once per plugin version, says what it did, and steps aside
+in the two cases where the decision is not its to make: a source install keeps
+`thinklight update` in charge, and `thinklight config bootstrap off` reduces it to
+reporting the gap the way it used to.
 
 ## Sound (optional, off by default)
 
@@ -218,6 +241,12 @@ on/off path, so once sound is on that diagnostic plays too.
 - **Camera frames:** ThinkLight needs camera permission to activate the hardware
   LED. It discards every captured frame in the callback, without image
   processing or disk storage.
+- **Network:** Two things reach out, both to this repository. The plugin's
+  session-start hook downloads and installs the programs for its own version when
+  `~/.local/bin` does not have them — once per plugin version, with a
+  notification saying so, and switchable off with `thinklight config bootstrap
+  off`. The installed CLI then checks for a newer version at most once a day and
+  only notifies. Neither carries anything about you or your prompts.
 - **Resource use:** Capture uses the low-resolution preset, with no encoding or
   video storage. The daemon waits for the next session while idle, but camera
   capture is fully stopped.

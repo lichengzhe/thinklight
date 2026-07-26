@@ -1,11 +1,23 @@
 #!/bin/bash
 # Install the latest ThinkLight release binaries to ~/.local/bin.
 # Usage: curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
+#        bash get.sh 2.5.0   # that exact release instead of the latest one
 # Run it again any time to update. For a source build, use install.sh instead.
 set -euo pipefail
 
 REPO=lichengzhe/thinklight
-URL="https://github.com/$REPO/releases/latest/download/thinklight-macos-universal.tar.gz"
+# The plugin passes its own version so a session can only ever install the
+# programs that release was built with, never whatever happens to be latest.
+VERSION=${1:-}
+if [[ -n "$VERSION" ]]; then
+  if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "thinklight: invalid version: $VERSION" >&2
+    exit 2
+  fi
+  URL="https://github.com/$REPO/releases/download/v$VERSION/thinklight-$VERSION-macos-universal.tar.gz"
+else
+  URL="https://github.com/$REPO/releases/latest/download/thinklight-macos-universal.tar.gz"
+fi
 
 if [[ "$(uname -s)" != Darwin ]]; then
   echo "thinklight requires macOS" >&2

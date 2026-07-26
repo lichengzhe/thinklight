@@ -22,12 +22,21 @@ light. What each one does is write or delete one file under
 pid, and (for Codex) the turn id and transcript path. **No prompt or response
 content is read**, and no hook makes a network call.
 
-**A fifth hook that only reads.** `SessionStart` runs
+**A fifth hook that installs the programs.** `SessionStart` runs
 `scripts/version-check.sh`, which compares this plugin's version against the
-version recorded by whichever installer put the programs in `~/.local/bin`. When
-they differ it asks the CLI to post one macOS notification, once per version. It
-reads two local files, writes nothing, installs nothing, and makes no network
-call.
+version recorded in `~/.local/state/thinklight/version`. When they match — the
+usual case — it reads two files and stops. When the programs are missing or older
+than this plugin, it hands off to `scripts/install-programs.sh` in the background:
+that downloads `get.sh` and the release tarball for this plugin's exact version
+from this repository's GitHub Releases, installs `thinklight`,
+`thinklight-daemon`, and `thinklight-check` into `~/.local/bin`, and posts one
+macOS notification saying what it did. It tries once per plugin version, and
+never touches an install that came from a source checkout — there
+`thinklight update` stays in charge and you get the old notification instead.
+
+Turn it off with `thinklight config bootstrap off`, or `THINKLIGHT_NO_BOOTSTRAP=1`
+before anything is installed; then install the programs yourself with the line
+below.
 
 ## Three commands, yours only
 
@@ -35,10 +44,10 @@ call.
 optional sound. Sound is off until you turn it on. All three are marked
 `disable-model-invocation`, so Claude cannot trigger them on its own.
 
-## The programs are installed separately
+## Installing the programs yourself
 
-This plugin configures hooks and commands; it does not ship the binaries. Install
-them first from the repository:
+Nothing about the automatic install is required. Run this before or after adding
+the plugin and the `SessionStart` hook will find its work already done:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
@@ -46,11 +55,13 @@ curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh |
 
 ## Network
 
-The plugin's own hooks never reach the network. The separately installed CLI
-checks this repository for a new version at most once every 24 hours via
-`git ls-remote`, and sends a macOS notification when one exists; it downloads
-nothing on its own. Nothing else contacts the network, and no usage data is
-collected or transmitted.
+Two things reach the network, both from this repository and neither carrying
+anything about you. The `SessionStart` hook downloads the release described above,
+once per plugin version, and only while the programs are missing or behind. The
+installed CLI then checks for a newer version at most once every 24 hours via
+`git ls-remote` and notifies you; it downloads nothing on its own, and
+`thinklight config update-check off` stops it. The four busy-light hooks never
+make a network call. No usage data is collected or transmitted.
 
 ## License
 

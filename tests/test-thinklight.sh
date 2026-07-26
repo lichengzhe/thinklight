@@ -154,6 +154,9 @@ assert_eq "$(run_cli config | tail -1)" "update-check: on"
 assert_eq "$(run_cli config update-check off | tail -1)" "update-check: off"
 [[ -f "$SHARE_DIR/update-check-off" ]] || fail "the opt-out was not recorded beside the other settings"
 CHECK_STAMP="$STATE_DIR/update-check"
+# The check compares this install's revision against the remote, so a checkout is
+# what makes it answerable in the first place.
+printf '%s\n' 0000000000000000000000000000000000000000 > "$STATE_DIR/revision"
 rm -f "$CHECK_STAMP"
 run_hook UserPromptSubmit optout on
 [[ ! -e "$CHECK_STAMP" ]] || fail "an opted-out install still scheduled a check"
@@ -164,6 +167,24 @@ run_hook UserPromptSubmit optin on
 run_hook Stop optin off
 run_cli config bogus on > /dev/null 2>&1 && fail "an unknown config key was accepted"
 pass "the background update check is switchable and off means off"
+
+# A prebuilt install has no revision to compare and the plugin keeps it current,
+# so the check must not go to the network to learn nothing.
+rm -f "$STATE_DIR/revision" "$CHECK_STAMP"
+run_hook UserPromptSubmit prebuilt on
+[[ ! -e "$CHECK_STAMP" ]] || fail "an install with no revision still scheduled a check"
+run_hook Stop prebuilt off
+pass "the update check stays out of an install it cannot reason about"
+
+# The plugin's own install is switchable the same way and in the same place: the
+# hook reads this file directly, because it has to answer the question on a
+# machine where the CLI does not exist yet.
+assert_eq "$(run_cli config | grep '^bootstrap:')" "bootstrap: on"
+assert_eq "$(run_cli config bootstrap off | grep '^bootstrap:')" "bootstrap: off"
+[[ -f "$SHARE_DIR/bootstrap-off" ]] || fail "the opt-out was not recorded beside the other settings"
+assert_eq "$(run_cli config bootstrap on | grep '^bootstrap:')" "bootstrap: on"
+[[ ! -e "$SHARE_DIR/bootstrap-off" ]] || fail "turning bootstrap back on left the switch behind"
+pass "the plugin's install is switchable from the CLI"
 
 # The bug this pins down: an update must not be able to start making noise on a
 # quiet machine or replace a track someone chose. install.sh writes defaults/
@@ -215,24 +236,138 @@ assert_eq "$(notify 9.9.12)" ""
 [[ ! -e "$NOTIFY_STATE/version-notice" ]] || fail "notified without knowing the installed version"
 pass "an unversioned install is left alone"
 
-# The bundled hook resolves the plugin's own version and forwards it.
-HOOK_HOME="$TEST_ROOT/hook-home"
-mkdir -p "$HOOK_HOME/bin"
-cat > "$HOOK_HOME/bin/thinklight" <<'STUB'
+# Installing the plugin is meant to be the whole install, so its SessionStart
+# hook puts the programs in place itself. The whole decision is exercised here
+# without touching the network: a stand-in installer plays get.sh, a stand-in CLI
+# records what it was asked to do, and HOME points somewhere disposable.
+BOOT_HOME="$TEST_ROOT/bootstrap-home"
+BOOT_BIN="$BOOT_HOME/.local/bin"
+BOOT_STATE="$BOOT_HOME/.local/state/thinklight"
+BOOT_SHARE="$BOOT_HOME/.local/share/thinklight"
+INSTALLER_LOG="$BOOT_STATE/installer-log"
+CLI_LOG="$BOOT_STATE/cli-log"
+mkdir -p "$BOOT_HOME"
+
+cat > "$TEST_ROOT/fake-cli" <<'STUB'
 #!/bin/bash
-printf '%s\n' "$@" > "$HOOK_LOG"
+printf '%s\n' "$@" >> "$HOME/.local/state/thinklight/cli-log"
 STUB
-chmod +x "$HOOK_HOME/bin/thinklight"
-HOOK_LOG="$TEST_ROOT/hook.log" \
-  env CLAUDE_PLUGIN_ROOT="$ROOT/plugin" THINKLIGHT_BIN_DIR="$HOOK_HOME/bin" HOOK_LOG="$TEST_ROOT/hook.log" \
-  "$ROOT/plugin/scripts/version-check.sh"
-assert_eq "$(sed -n '1p' "$TEST_ROOT/hook.log")" "_version_notify"
-assert_eq "$(sed -n '2p' "$TEST_ROOT/hook.log")" "$MANIFEST_VERSION"
-rm -f "$TEST_ROOT/hook.log"
-env CLAUDE_PLUGIN_ROOT="$ROOT/plugin" THINKLIGHT_BIN_DIR="$TEST_ROOT/nowhere" HOOK_LOG="$TEST_ROOT/hook.log" \
-  "$ROOT/plugin/scripts/version-check.sh" || fail "the hook failed when the CLI is absent"
-[[ ! -e "$TEST_ROOT/hook.log" ]] || fail "the hook ran something without an installed CLI"
-pass "the plugin hook forwards its manifest version and no-ops when nothing is installed"
+chmod +x "$TEST_ROOT/fake-cli"
+
+cat > "$TEST_ROOT/fake-get.sh" <<'FAKE'
+#!/bin/bash
+# Stands in for get.sh: lands a CLI and records the version it was handed.
+set -euo pipefail
+mkdir -p "$HOME/.local/bin" "$HOME/.local/state/thinklight"
+install -m 755 "$FAKE_CLI" "$HOME/.local/bin/thinklight"
+printf '%s\n' "${1:-latest}" > "$HOME/.local/state/thinklight/version"
+printf '%s\n' "${1:-latest}" >> "$HOME/.local/state/thinklight/installer-log"
+FAKE
+chmod +x "$TEST_ROOT/fake-get.sh"
+
+# -u so the surrounding test's overrides cannot leak in: this hook resolves
+# everything from HOME, exactly as it does in a real session.
+session_start() {
+  env -u THINKLIGHT_BIN_DIR -u THINKLIGHT_STATE_DIR -u THINKLIGHT_SHARE_DIR \
+    HOME="$BOOT_HOME" CLAUDE_PLUGIN_ROOT="$ROOT/plugin" \
+    FAKE_CLI="$TEST_ROOT/fake-cli" THINKLIGHT_GET_SH="$TEST_ROOT/fake-get.sh" \
+    THINKLIGHT_TEST_NO_NOTIFY=1 "$@" \
+    "$ROOT/plugin/scripts/version-check.sh"
+}
+
+# The install runs detached, so it is waited for rather than assumed.
+await() {
+  local path=$1 tries=0
+  until [[ -e "$path" ]]; do
+    tries=$((tries + 1))
+    [[ "$tries" -lt 200 ]] || return 1
+    sleep 0.05
+  done
+}
+
+# Nothing installed: the hook is the installer.
+session_start || fail "the hook failed with nothing installed"
+await "$BOOT_BIN/thinklight" || fail "the hook did not install the programs"
+await "$INSTALLER_LOG" || fail "the installer left no record"
+assert_eq "$(cat "$INSTALLER_LOG")" "$MANIFEST_VERSION"
+assert_eq "$(cut -d' ' -f1 "$BOOT_STATE/bootstrap-attempt")" "$MANIFEST_VERSION"
+pass "a session start installs the programs the other hooks call, pinned to the plugin's version"
+
+# In step, and the hook has to be cheap enough to run on every session start.
+rm -f "$INSTALLER_LOG" "$CLI_LOG"
+session_start
+sleep 0.5
+[[ ! -e "$INSTALLER_LOG" ]] || fail "an up-to-date install was reinstalled"
+[[ ! -e "$CLI_LOG" ]] || fail "an up-to-date install was still reported as drifted"
+pass "matching versions cost nothing"
+
+# A session start is not new information about a download that already ran, so
+# drift alone must not restart it.
+printf '0.0.1\n' > "$BOOT_STATE/version"
+rm -f "$INSTALLER_LOG" "$CLI_LOG"
+session_start
+sleep 0.5
+[[ ! -e "$INSTALLER_LOG" ]] || fail "a fresh attempt tried again straight away"
+assert_eq "$(sed -n '1p' "$CLI_LOG")" "_version_notify"
+assert_eq "$(sed -n '2p' "$CLI_LOG")" "$MANIFEST_VERSION"
+pass "an attempt that already ran is not repeated, and the gap is reported instead"
+
+# The one thing that changes the answer is a release being published, which is why
+# the attempt goes stale rather than standing for good. Without this, a plugin that
+# updated minutes before its own release built would stay behind until the next one.
+printf '%s %s\n' "$MANIFEST_VERSION" "$(( $(date +%s) - 21601 ))" \
+  > "$BOOT_STATE/bootstrap-attempt"
+session_start
+await "$INSTALLER_LOG" || fail "a stale attempt did not retry"
+assert_eq "$(cat "$INSTALLER_LOG")" "$MANIFEST_VERSION"
+assert_eq "$(cat "$BOOT_STATE/version")" "$MANIFEST_VERSION"
+pass "an attempt older than six hours tries again"
+
+# A source checkout owns its install: `thinklight update` is its way forward, and
+# prebuilt binaries dropped on top would take that command away.
+printf '0.0.1\n' > "$BOOT_STATE/version"
+: > "$BOOT_STATE/source"
+rm -f "$BOOT_STATE/bootstrap-attempt" "$INSTALLER_LOG" "$CLI_LOG"
+session_start
+sleep 0.5
+[[ ! -e "$INSTALLER_LOG" ]] || fail "the plugin installed over a source checkout"
+assert_eq "$(sed -n '1p' "$CLI_LOG")" "_version_notify"
+[[ ! -e "$BOOT_STATE/bootstrap-attempt" ]] || fail "a refusal was recorded as an attempt"
+rm -f "$BOOT_STATE/source"
+pass "a source install is reported, never overwritten"
+
+# Off means off, by either switch, and it still leaves the drift visible.
+mkdir -p "$BOOT_SHARE"
+: > "$BOOT_SHARE/bootstrap-off"
+rm -f "$INSTALLER_LOG" "$CLI_LOG"
+session_start
+sleep 0.5
+[[ ! -e "$INSTALLER_LOG" ]] || fail "bootstrap ran with the switch off"
+assert_eq "$(sed -n '1p' "$CLI_LOG")" "_version_notify"
+rm -f "$BOOT_SHARE/bootstrap-off" "$CLI_LOG"
+session_start THINKLIGHT_NO_BOOTSTRAP=1
+sleep 0.5
+[[ ! -e "$INSTALLER_LOG" ]] || fail "bootstrap ran with THINKLIGHT_NO_BOOTSTRAP=1"
+pass "both bootstrap switches stop the install without hiding the gap"
+
+# The retry rule: a download that fails withdraws its own attempt, so the next
+# session tries again instead of the machine staying dark until the next release.
+rm -f "$BOOT_STATE/bootstrap-attempt" "$INSTALLER_LOG" "$CLI_LOG"
+printf '#!/bin/bash\nexit 1\n' > "$TEST_ROOT/failing-get.sh"
+chmod +x "$TEST_ROOT/failing-get.sh"
+env -u THINKLIGHT_BIN_DIR -u THINKLIGHT_STATE_DIR -u THINKLIGHT_SHARE_DIR \
+  HOME="$BOOT_HOME" CLAUDE_PLUGIN_ROOT="$ROOT/plugin" \
+  FAKE_CLI="$TEST_ROOT/fake-cli" THINKLIGHT_GET_SH="$TEST_ROOT/failing-get.sh" \
+  THINKLIGHT_TEST_NO_NOTIFY=1 "$ROOT/plugin/scripts/version-check.sh"
+await "$BOOT_STATE/bootstrap-notice" || fail "a failed install recorded nothing"
+tries=0
+while [[ -e "$BOOT_STATE/bootstrap-attempt" ]]; do
+  tries=$((tries + 1))
+  [[ "$tries" -lt 200 ]] || fail "a failed install kept its attempt, blocking a retry"
+  sleep 0.05
+done
+assert_eq "$(cat "$BOOT_STATE/bootstrap-notice")" "$MANIFEST_VERSION"
+pass "a failed install withdraws its attempt and complains once"
 
 # Exercise the production daemon's Codex-interrupt fallback without requesting
 # camera permission, opening a camera, or playing anything out loud — the share

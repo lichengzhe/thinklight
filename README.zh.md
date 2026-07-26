@@ -11,7 +11,7 @@ ThinkLight用Mac内建摄像头旁的绿灯显示Claude Code和Codex CLI的状�
 | AI正在干活——放心去做别的 | 常亮 | 循环播放背景音乐 |
 | 干完了——轮到你 | 熄灭 | 播放一次完成音 |
 
-> **最快安装：**[复制一段指令，让Claude Code或Codex自动完成安装和配置。](#让agent帮你装推荐)
+> **安装只有一步**——[在Claude Code里执行两条命令](#claude-code)，其余的它自己装。
 
 ## 有什么用
 
@@ -33,29 +33,11 @@ ThinkLight把这个信号放进余光：灯亮着，AI还在忙，你继续专�
 
 需要一台带内建摄像头的Mac，macOS 14或更新。
 
-分两部分：**插件**负责在Agent开始和结束时通知状态灯，**程序**负责占住摄像头把LED点亮。插件会自己保持更新，程序装一次即可。
+东西是两部分——**插件**负责在Agent开始和结束时通知状态灯，**程序**负责占住摄像头把LED点亮——但你只需要装一个。插件在第一个会话里就会把与自己版本配套的程序装进`~/.local/bin`并发通知告诉你；之后插件更新，程序也照同样的方式跟上。这一步[你想自己来](#自己安装程序)当然也可以，想彻底关掉它则是一条命令。
 
-### 让Agent帮你装（推荐）
+### Claude Code
 
-把下面这段直接发给**正在这台Mac上运行、能够操作终端**的Claude Code、Codex或其他coding agent：
-
-```text
-请帮我在这台 Mac 上安装并配置 ThinkLight：https://github.com/lichengzhe/thinklight。
-先阅读仓库中的 README.zh.md 和 get.sh，确认安装范围。优先走插件：Claude Code 用
-`claude plugin marketplace add lichengzhe/thinklight` 和
-`claude plugin install thinklight@thinklight`，Codex CLI 用对应的 codex plugin 命令；
-只有插件方式失败时，才退回到往 ~/.claude/settings.json 里写 hooks。
-然后运行 get.sh 安装程序（或克隆仓库后运行 install.sh 从源码构建），并运行
-~/.local/bin/thinklight blink 3 和 ~/.local/bin/thinklight check 验证。
-需要我授予 macOS 摄像头权限或确认 hook 信任时，停下来明确告诉我该点哪里。
-完成后汇报安装位置、hook 配置和验证结果；不要改动无关设置。
-```
-
-macOS摄像头授权与Codex hook信任仍需要你亲自确认。
-
-### Claude Code 插件
-
-想自己动手的话，在Claude Code里执行两条命令：
+两条命令，之后什么都不用做：
 
 ```text
 /plugin marketplace add lichengzhe/thinklight
@@ -64,18 +46,15 @@ macOS摄像头授权与Codex hook信任仍需要你亲自确认。
 
 这会配好hooks，并加上`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`三个用于[声音](#声音默认关闭)的命令。这三个只能由你主动触发，Claude不会自己调用。
 
-然后安装程序并授权摄像头。第二行执行时macOS会弹出授权请求，允许之后绿灯会亮3秒：
+装好后开一个会话，插件就会在后台把程序装上——从[Releases](https://github.com/lichengzhe/thinklight/releases)下载的预编译通用二进制（Apple Silicon与Intel均适用）——装完发一条通知。灯第一次亮起时macOS会弹出摄像头授权，允许之后绿灯就跟着Agent走了。想一次看到全过程：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
-~/.local/bin/thinklight blink 3
+~/.local/bin/thinklight blink 3   # 绿灯亮3秒
 ```
-
-脚本会从[Releases](https://github.com/lichengzhe/thinklight/releases)下载预编译的通用二进制（Apple Silicon与Intel均适用）到`~/.local/bin`。更新时重新运行同一行即可；程序落后于插件时，插件会发通知提醒。
 
 ### Codex CLI
 
-Codex CLI 0.145及以上版本从同一个marketplace安装相同的hooks，同样需要上一步的程序：
+Codex CLI 0.145及以上版本安装相同的hooks，程序也以同样的方式装上：
 
 ```bash
 codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
@@ -83,9 +62,36 @@ codex plugin add thinklight@thinklight
 codex   # 在交互会话中确认 hook 信任提示
 ```
 
-### 其他安装方式
+### 让Agent帮你装
 
-**从源码构建。** 装有Xcode Command Line Tools（`swiftc`）的话，这种方式还能启用预编译版本没有的`thinklight update`和更新通知：
+把下面这段直接发给**正在这台Mac上运行、能够操作终端**的Claude Code、Codex或其他coding agent：
+
+```text
+请帮我在这台 Mac 上安装并配置 ThinkLight：https://github.com/lichengzhe/thinklight。
+先阅读仓库中的 README.zh.md、get.sh 和 plugin/scripts/install-programs.sh，确认安装范围。
+优先走插件：Claude Code 用 `claude plugin marketplace add lichengzhe/thinklight` 和
+`claude plugin install thinklight@thinklight`，Codex CLI 用对应的 codex plugin 命令；
+只有插件方式失败时，才退回到往 ~/.claude/settings.json 里写 hooks。
+插件会在会话开始时自己安装程序；如果 ~/.local/bin 里还没有，就运行 get.sh
+（或克隆仓库后运行 install.sh 从源码构建）。之后运行
+~/.local/bin/thinklight blink 3 和 ~/.local/bin/thinklight check 验证。
+需要我授予 macOS 摄像头权限或确认 hook 信任时，停下来明确告诉我该点哪里。
+完成后汇报安装位置、hook 配置和验证结果；不要改动无关设置。
+```
+
+macOS摄像头授权与Codex hook信任仍需要你亲自确认。
+
+### 自己安装程序
+
+下面任何一种方式都会让插件无事可做：自动安装只在`~/.local/bin`里缺程序、或程序比插件旧的时候才跑，所以先把程序装好，实际上就等于关掉了它。想彻底关掉，用`thinklight config bootstrap off`；如果什么都还没装，就在启动Agent的环境里设`THINKLIGHT_NO_BOOTSTRAP=1`。
+
+**一行装预编译版。** 和插件会做的下载完全相同：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
+```
+
+**从源码构建。** 装有Xcode Command Line Tools（`swiftc`）的话，这种方式还能启用预编译版本没有的`thinklight update`和更新通知；插件能认出源码安装，不会去碰它：
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
@@ -95,7 +101,9 @@ cd thinklight
 
 **手动放程序。** 从Releases下载压缩包，解压后用`xattr -d com.apple.quarantine`去掉隔离属性，再把三个程序放进`~/.local/bin`。
 
-**手动配hooks。** 不用插件就没有`/thinklight:*`命令、hooks也不会自动更新，但hooks本身只是`~/.claude/settings.json`里的四条：
+### 不用插件配hooks
+
+不用插件，代价是没有`/thinklight:*`命令、hooks不会自动更新，上面那套程序自动安装也没有了——程序从此由你自己装、自己更新。hooks本身只是`~/.claude/settings.json`里的四条：
 
 ```json
 "hooks": {
@@ -128,17 +136,17 @@ thinklight status           输出 on 或 off
 thinklight blink [秒]       亮起指定时间后熄灭
 thinklight check            读取 CoreMediaIO 报告的摄像头硬件状态
 thinklight version          输出已安装程序的版本
-thinklight config           输出全部设置：声音、已装音轨、更新检查
-thinklight config KEY VALUE 改一项设置：sound 或 update-check，取 on 或 off
+thinklight config           输出全部设置：声音、已装音轨、自动安装、更新检查
+thinklight config KEY VALUE 改一项设置：sound、bootstrap 或 update-check，取 on 或 off
 thinklight unmute           打开声音（首次会自动装上默认音轨）
 thinklight mute             关闭声音，音轨文件保留
 thinklight update --check   检查是否有新版
 thinklight update           更新 ThinkLight
 ```
 
-ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库（`git ls-remote`），安装更新需要手动运行`thinklight update`。这是ThinkLight唯一的联网行为，不采集也不上传任何使用数据。不想要的话`thinklight config update-check off`可以关掉——关掉之后`thinklight update --check`仍然可用，那是你主动问的，不算后台行为。
+ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库（`git ls-remote`），安装更新需要手动运行`thinklight update`。不采集也不上传任何使用数据。不想要的话`thinklight config update-check off`可以关掉——关掉之后`thinklight update --check`仍然可用，那是你主动问的，不算后台行为。
 
-装了Claude Code插件的话还多一层保障：插件会自动更新，而`~/.local/bin`里的程序不会，两者可能漂移成一个谁都没选择过的组合——新hooks配旧CLI。插件在会话开始时比对双方版本，不一致就发一条通知（每个版本只提醒一次）。它只提醒，不会自己动手装。
+另一道缝由插件自己合上：插件会自动更新，而`~/.local/bin`里的程序不会，两者本可能漂移成一个谁都没选择过的组合——新hooks配旧CLI。插件在会话开始时比对双方版本，不一致就下载并装上与自己配套的程序，然后发通知说明做了什么。每个插件版本只尝试一次，做了什么都会告诉你；有两种情况它不越权替你决定：源码安装仍由`thinklight update`说话，而`thinklight config bootstrap off`会让它退回从前那样只提醒。
 
 ## 声音（默认关闭）
 
@@ -159,6 +167,7 @@ Claude Code插件里是同样的三个：`/thinklight:unmute`、`/thinklight:mut
 ## 隐私、资源与兼容性
 
 - **摄像头画面**：ThinkLight需要摄像头权限来点亮硬件LED。采集到的帧会在回调中直接丢弃，不做图像处理，也不写入磁盘。
+- **联网**：只有两处会联网，对象都是本仓库。一是插件的会话开始hook：`~/.local/bin`里没有配套程序时，它会下载并安装——每个插件版本只做一次，装完发通知说明，`thinklight config bootstrap off`可关闭。二是装好后的CLI每天最多检查一次新版，且只发通知。两者都不携带任何关于你或你的对话的信息。
 - **资源占用**：采集使用低分辨率preset，不编码、不保存视频。空闲时daemon继续等待下一次会话，但摄像头采集完全停止。
 - **声音**：音轨完全本地播放，不联网；打开时音轨只是被打开并预加载播放缓冲，不整首解码进内存。静音（默认状态）下daemon不做任何音频初始化。
 - **视频会议**：macOS支持多个进程共享摄像头，ThinkLight已测试可与Zoom、腾讯会议同时运行。但其他应用正在使用摄像头时，绿灯会持续亮起，此时灯光无法反映ThinkLight的状态。
