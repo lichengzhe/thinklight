@@ -262,21 +262,35 @@ FileHandle.standardOutput.write(
         .data(using: .utf8)!
 )
 
+var lit = false
+
 // The LED only reports where you can see it; the soundtrack reports anywhere in
 // the room. Tracks live next to the install rather than inside the binary, so
 // swapping one is a file copy instead of a rebuild.
-let assetsDir = ProcessInfo.processInfo.environment["THINKLIGHT_ASSETS_DIR"].map {
+let soundDir = ProcessInfo.processInfo.environment["THINKLIGHT_SHARE_DIR"].map {
     URL(fileURLWithPath: $0, isDirectory: true)
 } ?? FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(".local/share/thinklight", isDirectory: true)
+let soundFlag = soundDir.appendingPathComponent("sound-on")
 
-// Decoded once at startup. Building a FLAC player on the turn boundary would
-// push the cue past the moment it exists to mark, and a missing file is not
-// worth refusing to run over — the light still works without the sound.
-func loadTrack(_ name: String, loops: Int) -> AVAudioPlayer? {
-    let url = assetsDir.appendingPathComponent(name)
-    guard let player = try? AVAudioPlayer(contentsOf: url) else {
-        fputs("thinklight: no audio at \(url.path); running silently\n", stderr)
+// Matched by stem rather than by a fixed name, so any format macOS can decode
+// works: loop.mp3 plays as readily as loop.flac.
+func trackURL(stem: String) -> URL? {
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: soundDir.path)
+    else { return nil }
+    guard let name = names.filter({ ($0 as NSString).deletingPathExtension == stem })
+        .sorted().first
+    else { return nil }
+    return soundDir.appendingPathComponent(name)
+}
+
+// A missing track is not worth refusing to run over — the light still works
+// without the sound.
+func loadTrack(_ stem: String, loops: Int) -> AVAudioPlayer? {
+    guard let url = trackURL(stem: stem),
+        let player = try? AVAudioPlayer(contentsOf: url)
+    else {
+        fputs("thinklight: no \(stem) track in \(soundDir.path); that cue stays silent\n", stderr)
         return nil
     }
     player.numberOfLoops = loops
@@ -284,11 +298,36 @@ func loadTrack(_ name: String, loops: Int) -> AVAudioPlayer? {
     return player
 }
 
-let runningTrack = loadTrack("loop.flac", loops: -1)
-let doneTrack = loadTrack("done.flac", loops: 0)
+var runningTrack: AVAudioPlayer?
+var doneTrack: AVAudioPlayer?
+var soundOn = false
 
-var lit = false
+// Sound is opt-in, and the flag is re-read every tick so `thinklight unmute`
+// lands inside the turn that ran it instead of waiting for a restart. Players
+// are built on that switch rather than on the light's own transition: decoding
+// at a turn boundary would push the cue past the moment it exists to mark,
+// while flipping the switch is a deliberate act with no deadline. Muted, the
+// daemon touches no audio API at all.
+func syncSound() {
+    let wanted = FileManager.default.fileExists(atPath: soundFlag.path)
+    if wanted == soundOn { return }
+    if wanted {
+        runningTrack = loadTrack("loop", loops: -1)
+        doneTrack = loadTrack("done", loops: 0)
+        // Unmuting while the agent is already working belongs on the loop now,
+        // not at the next turn — otherwise the command looks like it did nothing.
+        if lit { runningTrack?.play() }
+    } else {
+        runningTrack?.stop()
+        doneTrack?.stop()
+        runningTrack = nil
+        doneTrack = nil
+    }
+    soundOn = wanted
+}
+
 func tick() {
+    syncSound()
     let shouldLight = anySessionRunning()
     if shouldLight {
         syncLitCameras()

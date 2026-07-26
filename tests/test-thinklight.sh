@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/thinklight-test.XXXXXX")
 BIN_DIR="$TEST_ROOT/bin"
 STATE_DIR="$TEST_ROOT/state"
+SHARE_DIR="$TEST_ROOT/share"
 DAEMON="$BIN_DIR/thinklight-daemon"
 CLI="$ROOT/src/thinklight"
 
@@ -32,7 +33,7 @@ assert_eq() {
 
 run_cli() {
   env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$STATE_DIR" \
-    "$CLI" "$@"
+    THINKLIGHT_SHARE_DIR="$SHARE_DIR" "$CLI" "$@"
 }
 
 run_hook() {
@@ -116,13 +117,58 @@ assert_eq "$(run_cli status)" "off"
 kill -0 "$second_pid" 2>/dev/null && fail "force off left the daemon running"
 pass "force off clears state and stops the resident daemon"
 
+assert_eq "$(run_cli config | sed -n '1p')" "sound: off"
+[[ ! -e "$SHARE_DIR" ]] || fail "config created the sound directory"
+pass "sound is off until asked for, and config reads without writing"
+
+mkdir -p "$SHARE_DIR/defaults"
+printf 'default-loop' > "$SHARE_DIR/defaults/loop.flac"
+printf 'default-done' > "$SHARE_DIR/defaults/done.flac"
+assert_eq "$(run_cli unmute | sed -n '1p')" "sound: on"
+[[ -f "$SHARE_DIR/sound-on" ]] || fail "unmute did not record the switch"
+assert_eq "$(cat "$SHARE_DIR/loop.flac")" "default-loop"
+assert_eq "$(run_cli config | sed -n '3p')" "loop track: loop.flac"
+pass "unmute copies the bundled defaults into place and turns sound on"
+
+printf 'chosen' > "$SHARE_DIR/loop.flac"
+run_cli mute > /dev/null
+assert_eq "$(run_cli config | sed -n '1p')" "sound: off"
+[[ -f "$SHARE_DIR/loop.flac" ]] || fail "mute deleted a track"
+run_cli unmute > /dev/null
+assert_eq "$(cat "$SHARE_DIR/loop.flac")" "chosen"
+pass "mute keeps the tracks, and unmute never overwrites a chosen one"
+
+# Tracks are found by stem, so any format macOS can decode works.
+rm -f "$SHARE_DIR/done.flac"
+printf 'chosen-mp3' > "$SHARE_DIR/done.mp3"
+assert_eq "$(run_cli config | sed -n '4p')" "done track: done.mp3"
+run_cli unmute > /dev/null
+[[ ! -e "$SHARE_DIR/done.flac" ]] || fail "unmute re-added a default over a differently named track"
+pass "a track of any extension fills its slot"
+
+# The bug this pins down: an update must not be able to start making noise on a
+# quiet machine or replace a track someone chose. install.sh writes defaults/
+# and nothing else under share/, so run it against a throwaway HOME and check.
+INSTALL_HOME="$TEST_ROOT/home"
+INSTALL_SHARE="$INSTALL_HOME/.local/share/thinklight"
+mkdir -p "$INSTALL_SHARE"
+printf 'chosen' > "$INSTALL_SHARE/loop.flac"
+env HOME="$INSTALL_HOME" "$ROOT/install.sh" > /dev/null 2>&1 \
+  || fail "install.sh failed against a throwaway HOME"
+[[ ! -e "$INSTALL_SHARE/sound-on" ]] || fail "install.sh turned sound on"
+assert_eq "$(cat "$INSTALL_SHARE/loop.flac")" "chosen"
+[[ -f "$INSTALL_SHARE/defaults/loop.flac" ]] || fail "install.sh did not stage the default tracks"
+[[ ! -e "$INSTALL_SHARE/defaults/CREDITS.md" ]] || fail "install.sh copied a non-track asset"
+pass "install.sh stages defaults without touching sound state or a chosen track"
+
 # Exercise the production daemon's Codex-interrupt fallback without requesting
-# camera permission, opening a camera, or playing the tracks out loud — the
-# assets dir points at nothing, so the daemon runs silently.
+# camera permission, opening a camera, or playing anything out loud — the share
+# dir has no switch in it, so the daemon stays muted for the whole run.
 swiftc "$ROOT/src/thinklight-daemon.swift" -o "$DAEMON"
+DAEMON_LOG="$TEST_ROOT/daemon.log"
 env THINKLIGHT_STATE_DIR="$STATE_DIR" THINKLIGHT_TEST_NO_CAMERA=1 \
-  THINKLIGHT_ASSETS_DIR="$TEST_ROOT/no-assets" \
-  "$DAEMON" >/dev/null 2>&1 &
+  THINKLIGHT_SHARE_DIR="$TEST_ROOT/muted" \
+  "$DAEMON" > /dev/null 2>"$DAEMON_LOG" &
 production_pid=$!
 for _ in {1..40}; do
   kill -0 "$production_pid" 2>/dev/null && break
@@ -255,3 +301,50 @@ if kill -0 "$production_pid" 2>/dev/null; then
   fail "test daemon survived final cleanup"
 fi
 pass "final cleanup stops the production daemon"
+
+# That daemon just ran every session transition in this suite while muted. If
+# sound is genuinely opt-in it never went near the audio files.
+if grep -q track "$DAEMON_LOG"; then
+  fail "a muted daemon looked for tracks: $(cat "$DAEMON_LOG")"
+fi
+pass "a muted daemon runs the whole suite without touching audio"
+
+# unmute is meant to land while the daemon is already running, not at its next
+# start, and sound switched on with no tracks must degrade to the light alone
+# rather than refuse to run: the LED is the product, the soundtrack is an extra.
+SOUNDLESS_STATE="$TEST_ROOT/soundless-state"
+SOUNDLESS_SHARE="$TEST_ROOT/soundless-share"
+SOUNDLESS_LOG="$TEST_ROOT/soundless.log"
+mkdir -p "$SOUNDLESS_STATE/sessions" "$SOUNDLESS_SHARE"
+env THINKLIGHT_STATE_DIR="$SOUNDLESS_STATE" THINKLIGHT_TEST_NO_CAMERA=1 \
+  THINKLIGHT_SHARE_DIR="$SOUNDLESS_SHARE" \
+  "$DAEMON" > /dev/null 2>"$SOUNDLESS_LOG" &
+soundless_pid=$!
+sleep 1.5
+grep -q track "$SOUNDLESS_LOG" && fail "daemon looked for tracks before unmute"
+
+env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$SOUNDLESS_STATE" \
+  THINKLIGHT_SHARE_DIR="$SOUNDLESS_SHARE" "$CLI" unmute > /dev/null 2>&1 \
+  || fail "unmute failed with no default tracks to install"
+for _ in {1..80}; do
+  grep -q "no done track" "$SOUNDLESS_LOG" 2>/dev/null && break
+  sleep 0.05
+done
+kill -0 "$soundless_pid" 2>/dev/null || fail "daemon exited when a track was missing"
+grep -q "no loop track" "$SOUNDLESS_LOG" || fail "daemon did not report the missing loop track"
+grep -q "no done track" "$SOUNDLESS_LOG" || fail "daemon did not report the missing done track"
+
+# Still watching sessions with nothing to play: a token whose owner is gone
+# gets reaped as usual.
+bash -c 'exit 0' &
+dead_pid=$!
+wait "$dead_pid" 2>/dev/null || true
+printf '%s\n%s\n%s\n%s\n' "$dead_pid" "" "" "ghost" > "$SOUNDLESS_STATE/sessions/ghost"
+for _ in {1..80}; do
+  [[ ! -e "$SOUNDLESS_STATE/sessions/ghost" ]] && break
+  sleep 0.05
+done
+[[ ! -e "$SOUNDLESS_STATE/sessions/ghost" ]] || fail "daemon stopped watching sessions once a track was missing"
+kill "$soundless_pid" 2>/dev/null || true
+wait "$soundless_pid" 2>/dev/null || true
+pass "unmute reaches a running daemon, and a missing track costs the cue, not the light"
