@@ -4,12 +4,12 @@
 space — switch apps, go full screen, and still know the moment the AI is done.**
 
 ThinkLight uses the green LED beside the Mac's built-in camera to show the
-status of Claude Code and Codex CLI:
+status of Claude Code and Codex CLI, with optional sound to match:
 
-| Light | Meaning |
-| --- | --- |
-| On | The AI is working — go do something else |
-| Off | It's done — your turn |
+| State | Light | Sound (optional) |
+| --- | --- | --- |
+| The AI is working — go do something else | On | A track loops |
+| It's done — your turn | Off | A chime plays once |
 
 [中文](README.md)
 
@@ -25,9 +25,14 @@ baton is back is to keep switching to the terminal to check.
 ThinkLight puts that signal in your peripheral vision. While the light is on,
 the AI is still busy — stay focused on your own work. When it goes out, it is
 your turn: review the result, give feedback, hand off the next task. No
-popups, no sounds — and unlike desktop pets and status widgets, it costs zero
-screen real estate: the light sits outside your screen, visible across
-desktops and full screen.
+popups — and unlike desktop pets and status widgets, it costs zero screen real
+estate: the light sits outside your screen, visible across desktops and full
+screen.
+
+If you tend to walk away after handing off a task, you can add sound on top: a
+track loops while the agent works, and a chime plays once when it finishes.
+Sound is optional — install no tracks and ThinkLight stays completely silent,
+exactly as before.
 
 It is particularly useful if you:
 
@@ -166,6 +171,32 @@ ThinkLight checks for a new version in the background at most once every 24
 hours and sends a macOS notification when one is available. The check contacts
 this repository; installing an update requires running `thinklight update`.
 
+## Sound (optional)
+
+The LED only reports where you can see it. When you hand off a task and leave
+the screen, sound covers that gap.
+
+Tracks live in `~/.local/share/thinklight/` and are read when the daemon starts:
+
+```text
+~/.local/share/thinklight/loop.flac   loops while the agent works
+~/.local/share/thinklight/done.flac   plays once when it finishes
+```
+
+The repository's `assets/` directory ships two default tracks, and `install.sh`
+copies them to the paths above. To use your own, just replace the two files —
+no rebuild needed; then run `thinklight off --force` so the daemon exits, and it
+picks up the new tracks when the next session starts. Any format macOS can
+decode works (FLAC, MP3, WAV, AAC, …), but keep the names `loop` and `done`.
+
+To turn sound off, delete the two files: with no tracks to load the daemon logs
+one line to stderr and carries on, and the LED works as usual. `install.sh` also
+skips the copy when `assets/` is absent.
+
+Volume follows system volume; ThinkLight does not adjust it separately. Starting
+a new turn cuts off a completion chime that is still playing and returns to the
+loop — "your turn" goes stale the instant the next turn begins.
+
 ## Privacy, resources, and compatibility
 
 - **Camera frames:** ThinkLight needs camera permission to activate the hardware
@@ -173,7 +204,10 @@ this repository; installing an update requires running `thinklight update`.
   processing or disk storage.
 - **Resource use:** Capture uses the low-resolution preset, with no encoding or
   video storage. The daemon waits for the next session while idle, but camera
-  capture is fully stopped.
+  capture is fully stopped. When tracks are installed, they are decoded once at
+  daemon startup and held in memory.
+- **Sound:** Tracks play entirely locally, with no network access. With no
+  tracks installed the daemon performs no audio setup at all.
 - **Video calls:** macOS allows multiple processes to share a camera, and
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
   app is using the camera, however, the LED remains on, so it cannot reflect
@@ -207,6 +241,15 @@ session (light off). Codex tokens also carry transcript and turn metadata so
 the daemon can recognize a Ctrl+C-interrupted turn that never ran `Stop`.
 Keeping the idle daemon resident avoids losing a new start signal while an old
 process is exiting.
+
+Sound hangs off that same state transition, so it needs no second state machine:
+the daemon holds two `AVAudioPlayer`s — the loop (`numberOfLoops = -1`, seamless
+repeat) and the chime — starting the loop on dark → lit, and on lit → dark
+stopping it and playing the chime once. Both players are built at daemon
+startup; decoding on the transition itself would push the cue past the moment it
+exists to mark. When a track is missing, `AVAudioPlayer` construction fails, the
+daemon logs one stderr line and carries on — the light should not stop working
+just because there is no sound.
 
 ## License
 

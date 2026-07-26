@@ -117,9 +117,11 @@ kill -0 "$second_pid" 2>/dev/null && fail "force off left the daemon running"
 pass "force off clears state and stops the resident daemon"
 
 # Exercise the production daemon's Codex-interrupt fallback without requesting
-# camera permission or opening a camera.
+# camera permission, opening a camera, or playing the tracks out loud — the
+# assets dir points at nothing, so the daemon runs silently.
 swiftc "$ROOT/src/thinklight-daemon.swift" -o "$DAEMON"
 env THINKLIGHT_STATE_DIR="$STATE_DIR" THINKLIGHT_TEST_NO_CAMERA=1 \
+  THINKLIGHT_ASSETS_DIR="$TEST_ROOT/no-assets" \
   "$DAEMON" >/dev/null 2>&1 &
 production_pid=$!
 for _ in {1..40}; do
