@@ -1,71 +1,115 @@
 # ThinkLight 🟢
 
-**MacBook屏幕上面的🟢，变成AI工作状态灯。不占屏幕空间，切应用、开全屏，随时知道AI干完了。**
+**English** | [中文](README.zh.md)
 
-ThinkLight用Mac内建摄像头旁的绿灯显示Claude Code和Codex CLI的状态，并可选地配上声音：
+**The 🟢 above your MacBook screen, turned into an AI busy light. Zero screen
+space — switch apps, go full screen, and still know the moment the AI is done.**
 
-| 状态 | 灯光 | 声音（默认关闭） |
+ThinkLight uses the green LED beside the Mac's built-in camera to show the
+status of Claude Code and Codex CLI, with optional sound to match:
+
+| State | Light | Sound (off by default) |
 | --- | --- | --- |
-| AI正在干活——放心去做别的 | 常亮 | 循环播放背景音乐 |
-| 干完了——轮到你 | 熄灭 | 播放一次完成音 |
+| The AI is working — go do something else | On | A track loops |
+| It's done — your turn | Off | A chime plays once |
 
-[English](README.en.md)
+> **Fastest setup:** [Two commands in Claude Code, then one line in a terminal.](#claude-code-recommended)
 
-> **最快安装：**[复制一段指令，让Claude Code或Codex自动完成安装和配置。](#让ai帮你安装推荐)
+## Why it helps
 
-## 有什么用
+Working with an agent is a relay: you hand off a task and the baton is with
+the AI; when it finishes, the baton comes back to you. But once a task runs
+for a few minutes you switch to something else, and the only way to know the
+baton is back is to keep switching to the terminal to check.
 
-和AI Agent协作像接力：你派出任务，棒就在AI手里；它跑完，棒交还给你。但任务一跑几分钟，你切去做别的事之后，想知道棒是否回到了自己手里，只能反复切回终端看。
+ThinkLight puts that signal in your peripheral vision. While the light is on,
+the AI is still busy — stay focused on your own work. When it goes out, it is
+your turn: review the result, give feedback, hand off the next task. No
+popups — and unlike desktop pets and status widgets, it costs zero screen real
+estate: the light sits outside your screen, visible across desktops and full
+screen.
 
-ThinkLight把这个信号放进余光：灯亮着，AI还在忙，你继续专注手头的事；灯灭了，轮到你——验收结果、给反馈、派下一个任务。不弹窗，也不像桌宠或状态挂件要占一块屏幕——灯在屏幕之外，不占一个像素，切换桌面或进入全屏后依然可见。
+When you are away from the screen, you can add [sound](#sound-optional-off-by-default)
+on top — off by default, turned on with `thinklight unmute`.
 
-人不在屏幕前的时候，还可以[配上声音](#声音默认关闭)——默认关闭，`thinklight unmute`打开。
+It is particularly useful if you:
 
-它尤其适合：
+- regularly hand long-running tasks to Claude Code or Codex;
+- keep several agent sessions open at once;
+- want to stay focused without missing the handoff.
 
-- 经常派耗时任务给Claude Code或Codex；
-- 同时开着多个AI Agent会话；
-- 想保持专注，又不想错过接手的时机。
+With multiple sessions, the light stays on while any of them is still working,
+and goes out once they have all finished.
 
-多个会话并存时，只要还有一个在跑，灯就保持常亮；全部干完后熄灭。
+## Install
 
-## 安装
+You need a Mac with a built-in camera, running macOS 14 or later.
 
-需要一台带内建摄像头的Mac，macOS 14或更新。
+Two pieces: the **plugin**, which tells the light when your agent starts and
+stops, and the **programs**, which hold the camera so the LED comes on. The
+plugin keeps itself up to date; the programs are installed once.
 
-### 让AI帮你安装（推荐）
+### Claude Code (recommended)
 
-把下面这段直接发给**正在这台Mac上运行、能够操作终端**的Claude Code、Codex或其他coding agent：
+In Claude Code:
 
 ```text
-请帮我在这台 Mac 上安装并配置 ThinkLight：https://github.com/lichengzhe/thinklight。
-先阅读仓库中的 README.md 和 get.sh，确认安装范围；然后运行 get.sh 安装预编译版本
-（或克隆仓库后运行 install.sh 从源码构建），为这台 Mac 上已有的 Claude Code 和/或
-Codex CLI 配置 ThinkLight hooks，并运行 ~/.local/bin/thinklight blink 3 和
-~/.local/bin/thinklight check 验证。
-需要我授予 macOS 摄像头权限或确认 hook 信任时，停下来明确告诉我该点哪里。
-完成后汇报安装位置、hook 配置和验证结果；不要改动无关设置。
+/plugin marketplace add lichengzhe/thinklight
+/plugin install thinklight@thinklight
 ```
 
-AI可以完成下载、编译和hook配置；macOS摄像头授权与Codex hook信任仍需要你亲自确认。
+That configures the hooks and adds `/thinklight:unmute`, `/thinklight:mute`, and
+`/thinklight:config` for the optional [sound](#sound-optional-off-by-default).
+All three are yours to invoke only; Claude never triggers them on its own.
 
-### 一键安装
+Then install the programs and grant camera access. macOS asks on the second
+line, and the LED stays on for three seconds once you allow it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lichengzhe/thinklight/main/get.sh | bash
-```
-
-脚本会从[Releases](https://github.com/lichengzhe/thinklight/releases)下载最新的预编译通用二进制（Apple Silicon与Intel均适用）并安装到`~/.local/bin`。装好后运行测试命令，macOS会请求摄像头权限；授权后绿灯会亮3秒：
-
-```bash
 ~/.local/bin/thinklight blink 3
 ```
 
-更新时重新运行同一行安装命令即可（此方式下`thinklight update`和更新通知不可用）。不想执行脚本的话，也可以从Releases手动下载压缩包，解压后用`xattr -d com.apple.quarantine`去掉隔离属性，再把三个程序放进`~/.local/bin`。
+The script downloads precompiled universal binaries (Apple Silicon and Intel)
+from [Releases](https://github.com/lichengzhe/thinklight/releases) into
+`~/.local/bin`. Re-run the same line to update them; the plugin sends a
+notification when they have fallen behind it.
 
-### 源码安装
+### Codex CLI
 
-如果装有Xcode Command Line Tools（`swiftc`），也可以从源码构建，这种方式下`thinklight update`和更新通知可用：
+Codex CLI 0.145 and later installs the same hooks from the same marketplace,
+and needs the same programs from the step above:
+
+```bash
+codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
+codex plugin add thinklight@thinklight
+codex   # confirm the hook trust prompt in an interactive session
+```
+
+### Let an agent do it
+
+Paste this into Claude Code, Codex, or another coding agent that is **running
+on this Mac and can use its terminal**:
+
+```text
+Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
+First read README.md and get.sh to confirm the installation scope. Prefer the plugin: run
+`claude plugin marketplace add lichengzhe/thinklight` and `claude plugin install thinklight@thinklight`
+for Claude Code, and the codex plugin equivalents for Codex CLI, falling back to hooks in
+~/.claude/settings.json only if the plugin route fails. Then run get.sh to install the programs
+(or clone the repository and run install.sh to build from source), and verify with
+~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to
+click when macOS asks for camera access or Codex asks me to trust the hooks. When finished, report
+the install location, hook configuration, and verification results. Do not change unrelated settings.
+```
+
+You still need to personally approve macOS camera access and Codex hook trust.
+
+### Other ways to install
+
+**Build from source.** With the Xcode Command Line Tools (`swiftc`) installed,
+this also enables `thinklight update` and its update notifications, which the
+prebuilt path does not have:
 
 ```bash
 git clone https://github.com/lichengzhe/thinklight.git
@@ -73,22 +117,13 @@ cd thinklight
 ./install.sh
 ```
 
-程序会编译并安装到`~/.local/bin`，同样运行`thinklight blink 3`授权摄像头并测试。
+**Programs by hand.** Download the tarball from Releases, clear the download
+quarantine with `xattr -d com.apple.quarantine`, and put the three programs in
+`~/.local/bin`.
 
-随后为你使用的AI Agent配置hooks。配置完成后，状态会随会话自动更新。
-
-### Claude Code
-
-本仓库同时提供Claude Code plugin marketplace：
-
-```text
-/plugin marketplace add lichengzhe/thinklight
-/plugin install thinklight@thinklight
-```
-
-除了hooks，插件还提供三个用于[声音](#声音默认关闭)的命令：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。这三个只能由你主动触发，Claude不会自己调用。
-
-如果不使用插件，也可以把以下hooks合并到`~/.claude/settings.json`：
+**Hooks by hand.** Without the plugin you get no `/thinklight:*` commands and no
+automatic hook updates, but the hooks themselves are four lines in
+`~/.claude/settings.json`:
 
 ```json
 "hooks": {
@@ -107,73 +142,132 @@ cd thinklight
 }
 ```
 
-你提交消息（`UserPromptSubmit`）时灯亮起，回合正常结束（`Stop`）、API请求失败（`StopFailure`）或会话结束（`SessionEnd`）时熄灭。会话退出或崩溃后，daemon会在一秒内清理它的状态。权限确认框弹出期间算作「在跑」，灯保持亮起。
+However they are installed, the light turns on when you submit a message
+(`UserPromptSubmit`) and turns off when the turn ends normally (`Stop`), an API
+request fails (`StopFailure`), or the session ends (`SessionEnd`). If a session
+exits or crashes, the daemon clears its state within a second. A pending
+permission prompt counts as running, so the light stays on.
 
-### Codex CLI
+## Command line
 
-Codex CLI 0.145及以上版本可以通过插件配置相同的hooks：
-
-```bash
-codex plugin marketplace add https://github.com/lichengzhe/thinklight.git
-codex plugin add thinklight@thinklight
-codex   # 在交互会话中确认 hook 信任提示
-```
-
-## 命令行
-
-安装hooks后通常不需要手动调用这些命令，但它们可用于测试、排查或接入其他工具：
+You normally do not need these commands after installing the hooks, but they
+are useful for testing, troubleshooting, or integrating another tool:
 
 ```text
-thinklight on               将当前会话标记为运行中
-thinklight off [--force]    注销当前会话
-                            在终端直接运行或加 --force：清空状态并立即灭灯
-thinklight status           输出 on 或 off
-thinklight blink [秒]       亮起指定时间后熄灭
-thinklight check            读取 CoreMediaIO 报告的摄像头硬件状态
-thinklight version          输出已安装程序的版本
-thinklight config           输出全部设置：声音、已装音轨、更新检查
-thinklight config KEY VALUE 改一项设置：sound 或 update-check，取 on 或 off
-thinklight unmute           打开声音（首次会自动装上默认音轨）
-thinklight mute             关闭声音，音轨文件保留
-thinklight update --check   检查是否有新版
-thinklight update           更新 ThinkLight
+thinklight on               mark the current session as running
+thinklight off [--force]    deregister the current session
+                            at a terminal or with --force: clear state and turn off now
+thinklight status           print on or off
+thinklight blink [seconds]  turn on for the specified time, then turn off
+thinklight check            read the camera hardware state reported by CoreMediaIO
+thinklight version          print the installed programs' version
+thinklight config           print every setting: sound, tracks, update check
+thinklight config KEY VALUE change one setting: sound or update-check, on or off
+thinklight unmute           turn sound on (installs the default tracks on first use)
+thinklight mute             turn sound off, keeping the tracks in place
+thinklight update --check   check for a new version
+thinklight update           update ThinkLight
 ```
 
-ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库（`git ls-remote`），安装更新需要手动运行`thinklight update`。这是ThinkLight唯一的联网行为，不采集也不上传任何使用数据。不想要的话`thinklight config update-check off`可以关掉——关掉之后`thinklight update --check`仍然可用，那是你主动问的，不算后台行为。
+ThinkLight checks for a new version in the background at most once every 24
+hours and sends a macOS notification when one is available. The check contacts
+this repository over `git ls-remote`; installing an update requires running
+`thinklight update`. That check is the only thing ThinkLight sends over the
+network, and no usage data is collected or transmitted. Turn it off with
+`thinklight config update-check off` — `thinklight update --check` keeps working
+afterwards, since a check you asked for is not a background one.
 
-装了Claude Code插件的话还多一层保障：插件会自动更新，而`~/.local/bin`里的程序不会，两者可能漂移成一个谁都没选择过的组合——新hooks配旧CLI。插件在会话开始时比对双方版本，不一致就发一条通知（每个版本只提醒一次）。它只提醒，不会自己动手装。
+The Claude Code plugin adds a second safeguard. The plugin updates itself while
+the programs in `~/.local/bin` do not, so the two can drift into a combination
+nobody chose — new hooks calling an old CLI. At session start the plugin
+compares the two versions and sends one notification per version when they
+differ. It reports the gap; it never installs anything on its own.
 
-## 声音（默认关闭）
+## Sound (optional, off by default)
 
-灯只在你看得见的地方报信。派完任务就去做别的、人不在屏幕前时，声音能补上这一段。
+The LED only reports where you can see it. When you hand off a task and leave
+the screen, sound covers that gap.
 
 ```bash
-thinklight unmute      # 干活时循环播放，干完时一声提示
-thinklight mute        # 恢复静默，绿灯照常工作
-thinklight config      # 当前状态和已装的音轨
+thinklight unmute      # a track loops while the agent works, a chime marks your turn
+thinklight mute        # silent again; the LED keeps working
+thinklight config      # which of the two is in effect, and which tracks are installed
 ```
 
-Claude Code插件里是同样的三个：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。开关一秒内生效，所以`/thinklight:unmute`在它自己那一轮就能听见。
+Inside Claude Code the plugin offers the same three as `/thinklight:unmute`,
+`/thinklight:mute`, and `/thinklight:config`. The switch takes effect within a
+second, so `/thinklight:unmute` is audible in the very turn that runs it.
 
-第一次`unmute`会把两首默认音轨装到`~/.local/share/thinklight/`：`loop`循环播放，`done`播一次。想换成自己的直接替换文件，格式支持macOS能解码的常见类型（FLAC、MP3、WAV、AAC等），扩展名不限，只有`loop`和`done`这两个名字有意义；换完运行`thinklight mute && thinklight unmute`重新加载。之后再`unmute`不会覆盖你换过的音轨，删掉才会取回默认曲——安装和更新同样碰不到这两个文件，也改不了开关状态。（想放到别处：设`THINKLIGHT_SHARE_DIR`。）
+The first `unmute` copies the two default tracks into
+`~/.local/share/thinklight/`: `loop` repeats while the agent works, `done` plays
+once when it finishes. To use your own, replace either file — any format macOS
+can decode works (FLAC, MP3, WAV, AAC, …) and the extension does not have to
+match; only the names `loop` and `done` matter. Run `thinklight mute && thinklight
+unmute` to pick up a replacement. A later `unmute` never overwrites a track you
+chose, and deleting one is how you get the bundled default back — installing or
+updating ThinkLight touches neither those files nor the switch. (Set
+`THINKLIGHT_SHARE_DIR` to keep them somewhere else.)
 
-音量跟随系统音量。完成音还没放完你就派了新任务的话，它会被立刻掐断——「轮到你了」在下一轮开始的瞬间就过期了。`thinklight blink`走的是同一条on/off路径，所以打开声音后这个诊断命令也会响。
+Volume follows system volume; ThinkLight does not adjust it separately. Starting
+a new turn cuts off a completion chime that is still playing — "your turn" goes
+stale the instant the next turn begins. `thinklight blink` runs through the same
+on/off path, so once sound is on that diagnostic plays too.
 
-## 隐私、资源与兼容性
+## Privacy, resources, and compatibility
 
-- **摄像头画面**：ThinkLight需要摄像头权限来点亮硬件LED。采集到的帧会在回调中直接丢弃，不做图像处理，也不写入磁盘。
-- **资源占用**：采集使用低分辨率preset，不编码、不保存视频。空闲时daemon继续等待下一次会话，但摄像头采集完全停止。
-- **声音**：音轨完全本地播放，不联网；打开时音轨只是被打开并预加载播放缓冲，不整首解码进内存。静音（默认状态）下daemon不做任何音频初始化。
-- **视频会议**：macOS支持多个进程共享摄像头，ThinkLight已测试可与Zoom、腾讯会议同时运行。但其他应用正在使用摄像头时，绿灯会持续亮起，此时灯光无法反映ThinkLight的状态。
-- **摄像头选择**：使用Mac内建摄像头；接有Studio Display时，它的摄像头灯也会同步亮灭，每台显示器一个🟢（灯亮期间每秒重新检测插拔，运行中途插上的显示器约1秒后跟上）。连续互通相机和其他外接摄像头不受影响。
-- **指示灯归属**：Daemon通过launchd启动，macOS会把摄像头使用记在`thinklight-daemon`自己名下。菜单栏只有控制中心图标上的小绿点，不会额外出现绿色摄像头胶囊图标。
-- **异常退出与中断**：ThinkLight每秒检查一次会话所属进程，并清理已经退出的会话状态。Codex的Ctrl+C中断不会触发`Stop` hook，因此daemon还会检测该回合写入本地transcript的结束事件并清理状态。Claude Code的Esc中断目前没有对应hook，因此中断后灯可能暂时保持亮起；等下一个回合结束时会熄灭，也可以运行`thinklight off`。
+- **Camera frames:** ThinkLight needs camera permission to activate the hardware
+  LED. It discards every captured frame in the callback, without image
+  processing or disk storage.
+- **Resource use:** Capture uses the low-resolution preset, with no encoding or
+  video storage. The daemon waits for the next session while idle, but camera
+  capture is fully stopped.
+- **Sound:** Tracks play entirely locally, with no network access; while sound is
+  on each track is opened and buffered for playback rather than decoded into
+  memory whole. While muted — the default — the daemon performs no audio setup
+  at all.
+- **Video calls:** macOS allows multiple processes to share a camera, and
+  ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
+  app is using the camera, however, the LED remains on, so it cannot reflect
+  ThinkLight's state on its own.
+- **Camera selection:** ThinkLight uses the Mac's built-in camera, and when a
+  Studio Display is connected its camera LED lights in sync — one 🟢 per
+  display (docking is re-checked once a second while the light is on, so a
+  display plugged in mid-run joins about a second later). Continuity
+  Camera and other external webcams are left alone.
+- **Indicator attribution:** The daemon is launched through launchd, so macOS
+  attributes the camera use to `thinklight-daemon` itself. Only the small green
+  dot on the Control Center icon appears — no extra green camera pill in the
+  menu bar.
+- **Unexpected exits and interrupts:** ThinkLight checks each session's owner
+  process once per second and removes state for processes that have exited.
+  Because a Codex Ctrl+C interrupt does not run the `Stop` hook, the daemon also
+  detects that turn's terminal event in the local transcript and clears its
+  state. Claude Code currently has no hook for an Esc interrupt, so the LED may
+  remain on temporarily; it turns off when the next turn ends, or you can run
+  `thinklight off`.
 
-## 原理
+## How it works
 
-ThinkLight的Swift daemon在每个状态摄像头（内建摄像头，接有Studio Display时加上它的摄像头）上各启动一个`AVCaptureSession`。摄像头实际采集时，macOS会点亮与硬件联动的绿色指示灯；停止采集时指示灯熄灭。Daemon每秒核对各个AI Agent会话的状态：只要还有会话在运行就保持采集（灯亮），没有则停止采集并等待下一次会话（灯灭）。Codex token还带有transcript和turn信息，让daemon能识别被Ctrl+C打断而未触发`Stop`的回合。Daemon空闲常驻，避免会话刚开始时撞上旧进程退出而漏掉启动信号。
+The ThinkLight Swift daemon starts an `AVCaptureSession` on each status camera
+(the built-in one, plus a Studio Display's while docked).
+macOS turns on the hardware-linked green indicator while the camera is actually
+capturing and turns it off when capture stops. Once a second the daemon checks
+the sessions registered by each agent: while any is still running it keeps
+capturing (light on); when none remain it stops capture and waits for the next
+session (light off). Codex tokens also carry transcript and turn metadata so
+the daemon can recognize a Ctrl+C-interrupted turn that never ran `Stop`.
+Keeping the idle daemon resident avoids losing a new start signal while an old
+process is exiting.
 
-声音挂在同一个状态跳变上，因此不需要额外的状态机：daemon用两个`AVAudioPlayer`分别持有循环曲（`numberOfLoops = -1`，无缝重复）和完成音，暗→亮时启动循环曲，亮→暗时停掉它并播一次完成音。同一次tick还会重读`unmute`写下的开关，所以设置一秒内生效；播放器在开关翻转时构建，而不是在灯的跳变上——那一秒才解码会把提示音推迟到它本该标记的时刻之后。静音时完全不碰音频API，音轨缺失时也只记一行stderr继续跑——灯不该因为没有声音就罢工。
+Sound hangs off that same state transition, so it needs no second state machine:
+the daemon holds two `AVAudioPlayer`s — the loop (`numberOfLoops = -1`, seamless
+repeat) and the chime — starting the loop on dark → lit, and on lit → dark
+stopping it and playing the chime once. The same tick re-reads the switch
+`unmute` writes, so the setting lands within a second; the players are built on
+that switch rather than on the light's own transition, since decoding at a turn
+boundary would push the cue past the moment it exists to mark. Muted, the daemon
+touches no audio API at all, and a missing track costs one stderr line rather
+than the run — the light should not stop working just because there is no sound.
 
 ## License
 
