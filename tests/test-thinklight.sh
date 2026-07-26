@@ -161,6 +161,60 @@ assert_eq "$(cat "$INSTALL_SHARE/loop.flac")" "chosen"
 [[ ! -e "$INSTALL_SHARE/defaults/CREDITS.md" ]] || fail "install.sh copied a non-track asset"
 pass "install.sh stages defaults without touching sound state or a chosen track"
 
+# The plugin updates itself and the programs do not, so the plugin's hook needs
+# something to compare against. install.sh records what it installed.
+MANIFEST_VERSION=$(/usr/bin/plutil -extract version raw -o - "$ROOT/plugin/.claude-plugin/plugin.json")
+assert_eq "$(cat "$INSTALL_HOME/.local/state/thinklight/version")" "$MANIFEST_VERSION"
+assert_eq "$(env HOME="$INSTALL_HOME" THINKLIGHT_BIN_DIR="$BIN_DIR" \
+  "$INSTALL_HOME/.local/bin/thinklight" version)" "$MANIFEST_VERSION"
+pass "install.sh records the manifest version and the CLI reports it"
+
+# Drift is reported once per version, never on stdout: SessionStart stdout
+# becomes Claude's context, and the hook must add nothing to it.
+NOTIFY_STATE="$TEST_ROOT/notify-state"
+mkdir -p "$NOTIFY_STATE"
+notify() {
+  env THINKLIGHT_STATE_DIR="$NOTIFY_STATE" THINKLIGHT_BIN_DIR="$BIN_DIR" \
+    THINKLIGHT_TEST_NO_NOTIFY=1 "$CLI" _version_notify "$@"
+}
+printf '9.9.9\n' > "$NOTIFY_STATE/version"
+assert_eq "$(notify 9.9.9)" ""
+[[ ! -e "$NOTIFY_STATE/version-notice" ]] || fail "matching versions still recorded a notice"
+assert_eq "$(notify 9.9.10)" ""
+assert_eq "$(cat "$NOTIFY_STATE/version-notice")" "9.9.10"
+notice_stamp=$(stat -f %m "$NOTIFY_STATE/version-notice")
+notify 9.9.10
+assert_eq "$(stat -f %m "$NOTIFY_STATE/version-notice")" "$notice_stamp"
+assert_eq "$(notify 9.9.11)" ""
+assert_eq "$(cat "$NOTIFY_STATE/version-notice")" "9.9.11"
+pass "version drift notifies once per version and never writes to stdout"
+
+# An install that predates version recording must not be nagged about a gap it
+# cannot even measure.
+rm -f "$NOTIFY_STATE/version" "$NOTIFY_STATE/version-notice"
+assert_eq "$(notify 9.9.12)" ""
+[[ ! -e "$NOTIFY_STATE/version-notice" ]] || fail "notified without knowing the installed version"
+pass "an unversioned install is left alone"
+
+# The bundled hook resolves the plugin's own version and forwards it.
+HOOK_HOME="$TEST_ROOT/hook-home"
+mkdir -p "$HOOK_HOME/bin"
+cat > "$HOOK_HOME/bin/thinklight" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$@" > "$HOOK_LOG"
+STUB
+chmod +x "$HOOK_HOME/bin/thinklight"
+HOOK_LOG="$TEST_ROOT/hook.log" \
+  env CLAUDE_PLUGIN_ROOT="$ROOT/plugin" THINKLIGHT_BIN_DIR="$HOOK_HOME/bin" HOOK_LOG="$TEST_ROOT/hook.log" \
+  "$ROOT/plugin/scripts/version-check.sh"
+assert_eq "$(sed -n '1p' "$TEST_ROOT/hook.log")" "_version_notify"
+assert_eq "$(sed -n '2p' "$TEST_ROOT/hook.log")" "$MANIFEST_VERSION"
+rm -f "$TEST_ROOT/hook.log"
+env CLAUDE_PLUGIN_ROOT="$ROOT/plugin" THINKLIGHT_BIN_DIR="$TEST_ROOT/nowhere" HOOK_LOG="$TEST_ROOT/hook.log" \
+  "$ROOT/plugin/scripts/version-check.sh" || fail "the hook failed when the CLI is absent"
+[[ ! -e "$TEST_ROOT/hook.log" ]] || fail "the hook ran something without an installed CLI"
+pass "the plugin hook forwards its manifest version and no-ops when nothing is installed"
+
 # Exercise the production daemon's Codex-interrupt fallback without requesting
 # camera permission, opening a camera, or playing anything out loud — the share
 # dir has no switch in it, so the daemon stays muted for the whole run.

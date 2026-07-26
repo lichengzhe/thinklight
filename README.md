@@ -130,6 +130,7 @@ thinklight off [--force]    注销当前会话
 thinklight status           输出 on 或 off
 thinklight blink [秒]       亮起指定时间后熄灭
 thinklight check            读取 CoreMediaIO 报告的摄像头硬件状态
+thinklight version          输出已安装程序的版本
 thinklight config           输出声音开关状态和已安装的音轨
 thinklight unmute           打开声音（首次会自动装上默认音轨）
 thinklight mute             关闭声音，音轨文件保留
@@ -138,6 +139,8 @@ thinklight update           更新 ThinkLight
 ```
 
 ThinkLight每24小时最多在后台检查一次新版，有更新时发送macOS通知。检查过程会访问本仓库，安装更新需要手动运行`thinklight update`。
+
+装了Claude Code插件的话还多一层保障：插件会自动更新，而`~/.local/bin`里的程序不会，两者可能漂移成一个谁都没选择过的组合——新hooks配旧CLI。插件在会话开始时比对双方版本，不一致就发一条通知（每个版本只提醒一次）。它只提醒，不会自己动手装。
 
 ## 声音（默认关闭）
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|update [--check]
+# thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|version|update [--check]
 # One light, two states: on = an agent is running, off = nothing running.
 # The daemon owns the LED; this CLI only records per-session tokens and makes
 # sure the daemon is available.
@@ -17,6 +17,10 @@ SPAWN_LOCK="$STATE/spawn.lock"
 SOURCE_FILE="$STATE/source"
 REVISION_FILE="$STATE/revision"
 UPDATE_CHECK_FILE="$STATE/update-check"
+# Written by whichever installer put the binaries here, so the version is the
+# installers' to state rather than a constant this file has to remember to bump.
+VERSION_FILE="$STATE/version"
+VERSION_NOTICE_FILE="$STATE/version-notice"
 REPO_URL="https://github.com/lichengzhe/thinklight.git"
 # Sound lives here rather than in the state dir because the tracks are the
 # user's to replace. Installers only ever write defaults/; the tracks beside it
@@ -336,6 +340,9 @@ case "${1:-status}" in
   check)
     exec "$BIN_DIR/thinklight-check"
     ;;
+  version)
+    cat "$VERSION_FILE" 2>/dev/null || { echo "unknown"; exit 1; }
+    ;;
   config)
     print_config
     ;;
@@ -355,6 +362,32 @@ case "${1:-status}" in
       /usr/bin/osascript -e 'display notification "Run thinklight update to install it." with title "ThinkLight update available"' >/dev/null 2>&1
     fi
     ;;
+  _version_notify)
+    # The Claude Code plugin updates itself; the binaries in ~/.local/bin do
+    # not. Left alone the two drift into a combination nobody chose — new hooks
+    # calling an old CLI — and the user has no way to see it, because the drift
+    # arrived through an update they never ran. The plugin's SessionStart hook
+    # reports its own version here so the gap becomes visible.
+    #
+    # Notified rather than printed: SessionStart stdout becomes Claude's
+    # context, and a maintenance notice does not belong there. Once per version,
+    # not once per session — a notice you cannot act on twice is nagging.
+    plugin_version="${2:-}"
+    installed=$(cat "$VERSION_FILE" 2>/dev/null)
+    [[ -n "$plugin_version" && -n "$installed" ]] || exit 0
+    [[ "$plugin_version" != "$installed" ]] || exit 0
+    [[ "$(cat "$VERSION_NOTICE_FILE" 2>/dev/null)" != "$plugin_version" ]] || exit 0
+    mkdir -p "$STATE" || exit 0
+    printf '%s\n' "$plugin_version" > "$VERSION_NOTICE_FILE"
+    if [[ -f "$SOURCE_FILE" ]]; then
+      how="Run thinklight update to catch up."
+    else
+      how="Re-run the install line from the README to catch up."
+    fi
+    # Integration tests exercise the drift bookkeeping without popping banners.
+    [[ "${THINKLIGHT_TEST_NO_NOTIFY:-}" == "1" ]] && exit 0
+    /usr/bin/osascript -e "display notification \"Programs are at $installed, plugin at $plugin_version. $how\" with title \"ThinkLight is out of date\"" >/dev/null 2>&1
+    ;;
   _sync)
     # Internal upgrade hook: replace any older daemon, then let session tokens decide.
     mkdir -p "$SESSIONS" || exit 1
@@ -362,7 +395,7 @@ case "${1:-status}" in
     if has_sessions; then ensure_daemon; fi
     ;;
   *)
-    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|update [--check]" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config|mute|unmute|version|update [--check]" >&2
     exit 64
     ;;
 esac

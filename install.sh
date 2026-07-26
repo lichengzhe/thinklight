@@ -27,6 +27,15 @@ if [ -d "$SCRIPT_DIR/assets" ]; then
 fi
 mkdir -p ~/.local/state/thinklight
 printf '%s\n' "$SCRIPT_DIR" > ~/.local/state/thinklight/source
+# The plugin manifest is the one place a version is declared, and the release
+# workflow already keys off it. Recording what got installed is what lets the
+# plugin notice later that these programs have fallen behind it.
+if version=$(/usr/bin/plutil -extract version raw -o - \
+  "$SCRIPT_DIR/plugin/.claude-plugin/plugin.json" 2>/dev/null); then
+  printf '%s\n' "$version" > ~/.local/state/thinklight/version
+else
+  rm -f ~/.local/state/thinklight/version
+fi
 if ! git -C "$SCRIPT_DIR" rev-parse HEAD > ~/.local/state/thinklight/revision 2>/dev/null; then
   rm -f ~/.local/state/thinklight/revision
   echo "warning: not a git checkout; 'thinklight update' and update checks are disabled" >&2

@@ -45,6 +45,13 @@ mkdir -p ~/.local/state/thinklight
 # A prebuilt install has no git checkout: 'thinklight update' and update
 # checks are off. Updating means running this script again.
 rm -f ~/.local/state/thinklight/source ~/.local/state/thinklight/revision
+# Recording the version is what lets the Claude Code plugin notice later that
+# these programs have fallen behind it, since this install path has no manifest.
+if [ -f "$tmp/VERSION" ]; then
+  install -m 644 "$tmp/VERSION" ~/.local/state/thinklight/version
+else
+  rm -f ~/.local/state/thinklight/version
+fi
 ~/.local/bin/thinklight _sync </dev/null
 
 echo "installed: thinklight thinklight-daemon thinklight-check -> ~/.local/bin"

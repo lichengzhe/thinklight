@@ -165,6 +165,7 @@ thinklight off [--force]    deregister the current session
 thinklight status           print on or off
 thinklight blink [seconds]  turn on for the specified time, then turn off
 thinklight check            read the camera hardware state reported by CoreMediaIO
+thinklight version          print the installed programs' version
 thinklight config           print the sound setting and the installed tracks
 thinklight unmute           turn sound on (installs the default tracks on first use)
 thinklight mute             turn sound off, keeping the tracks in place
@@ -175,6 +176,12 @@ thinklight update           update ThinkLight
 ThinkLight checks for a new version in the background at most once every 24
 hours and sends a macOS notification when one is available. The check contacts
 this repository; installing an update requires running `thinklight update`.
+
+The Claude Code plugin adds a second safeguard. The plugin updates itself while
+the programs in `~/.local/bin` do not, so the two can drift into a combination
+nobody chose — new hooks calling an old CLI. At session start the plugin
+compares the two versions and sends one notification per version when they
+differ. It reports the gap; it never installs anything on its own.
 
 ## Sound (optional, off by default)
 

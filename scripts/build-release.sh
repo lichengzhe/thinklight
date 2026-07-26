@@ -47,6 +47,8 @@ done
 
 install -m 755 "$ROOT/src/thinklight" "$PACKAGE_DIR/thinklight"
 install -m 644 "$ROOT/LICENSE" "$PACKAGE_DIR/LICENSE"
+# A binary install has no manifest to read the version from, so carry it.
+printf '%s\n' "$VERSION" > "$PACKAGE_DIR/VERSION"
 
 # The default tracks ride along so a binary install can turn sound on without a
 # checkout. get.sh files them under defaults/, and they stay inert until
