@@ -1,5 +1,5 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|version|update [--check]
+# thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|theme install <pkg>|current|reset|version|update [--check]
 # One light, two states: on = an agent is running, off = nothing running.
 # The daemon owns the LED; this CLI only records per-session tokens and makes
 # sure the daemon is available.
@@ -34,6 +34,10 @@ GET_SH_URL="https://raw.githubusercontent.com/$REPO/main/get.sh"
 SHARE="${THINKLIGHT_SHARE_DIR:-$HOME/.local/share/thinklight}"
 SOUND_FLAG="$SHARE/sound-on"
 DEFAULT_TRACKS="$SHARE/defaults"
+# What AVAudioPlayer can actually decode. A theme package is checked against
+# this up front, so a format it cannot play is rejected at install time rather
+# than failing silently the first time the daemon tries to load it.
+SOUND_EXTS="mp3 flac wav m4a aac aiff caf"
 # Settings a user chose belong beside the tracks, out of reach of installers,
 # for the same reason: an update must not be able to switch the background
 # update check back on for someone who turned it off.
@@ -375,8 +379,23 @@ track_for() {
   return 1
 }
 
+ext_allowed() {
+  local ext=$1 candidate
+  for candidate in $SOUND_EXTS; do
+    [[ "$ext" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
+# No jq: theme.json's fields are single-line strings, so a sed capture on the
+# `"key": "value"` shape covers every theme this format asks for.
+theme_field() {
+  local key=$1 file=$2
+  sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" 2>/dev/null | head -n1
+}
+
 print_config() {
-  local stem track
+  local stem track theme_name
   if [[ -f "$SOUND_FLAG" ]]; then echo "sound: on"; else echo "sound: off"; fi
   echo "tracks: $SHARE"
   for stem in loop done; do
@@ -388,6 +407,14 @@ print_config() {
   done
   if [[ -f "$BOOTSTRAP_OFF" ]]; then echo "bootstrap: off"; else echo "bootstrap: on"; fi
   if [[ -f "$UPDATE_CHECK_OFF" ]]; then echo "update-check: off"; else echo "update-check: on"; fi
+  # Appended last so the line numbers every earlier field already prints at
+  # stay put for anything reading this output by position.
+  if [[ -f "$SHARE/theme.json" ]]; then
+    theme_name=$(theme_field name "$SHARE/theme.json")
+    echo "theme: ${theme_name:-unknown}"
+  else
+    echo "theme: default"
+  fi
 }
 
 # Every "off" is the same shape: a marker in the user's own directory, created
@@ -458,6 +485,155 @@ mute_sound() {
   print_config
 }
 
+# The daemon only rebuilds its AVAudioPlayers when the sound switch flips, so
+# a track swapped in while sound is already on needs a mute/unmute cycle to be
+# heard at all — otherwise the change is invisible until the next `unmute`.
+reload_sound_if_on() {
+  [[ -f "$SOUND_FLAG" ]] || return 0
+  mute_sound > /dev/null || return 1
+  unmute_sound > /dev/null || return 1
+}
+
+# name/author/license/source describe the theme currently in $SHARE, read from
+# the theme.json an install left there. No file at all means nothing has ever
+# been installed (or `theme reset` put the bundled default back); a file with
+# missing or unparseable fields means a theme is installed but did not ship
+# metadata — those two are different states and are reported differently.
+theme_current() {
+  local file="$SHARE/theme.json"
+  if [[ ! -f "$file" ]]; then
+    echo "name: default"
+    return
+  fi
+  local name title author license source
+  name=$(theme_field name "$file")
+  title=$(theme_field title "$file")
+  author=$(theme_field author "$file")
+  license=$(theme_field license "$file")
+  source=$(theme_field source "$file")
+  echo "name: ${name:-unknown}"
+  echo "title: ${title:-unknown}"
+  echo "author: ${author:-unknown}"
+  echo "license: ${license:-unknown}"
+  echo "source: ${source:-unknown}"
+}
+
+# A package must offer both tracks, in a format macOS can decode, before
+# anything under $SHARE moves — installing half a theme would leave the
+# previous one partly overwritten and partly gone.
+validate_theme_dir() {
+  local dir=$1 loop_track done_track
+  loop_track=$(track_for loop "$dir") || {
+    echo "thinklight: theme package is missing a loop track (loop.<ext>)" >&2
+    return 1
+  }
+  done_track=$(track_for done "$dir") || {
+    echo "thinklight: theme package is missing a done track (done.<ext>)" >&2
+    return 1
+  }
+  ext_allowed "${loop_track##*.}" || {
+    echo "thinklight: loop track has an unsupported extension: ${loop_track##*.}" >&2
+    return 1
+  }
+  ext_allowed "${done_track##*.}" || {
+    echo "thinklight: done track has an unsupported extension: ${done_track##*.}" >&2
+    return 1
+  }
+}
+
+# Finder's "Compress" on a folder is the ordinary way to hand-build a zip by
+# hand, and it wraps the contents in one top-level directory instead of
+# zipping them flat — `lofi-rain/loop.mp3` rather than `loop.mp3`. A store
+# package is zipped flat and is unaffected. One level of descent, never
+# recursive: this command replaces something the user will hear, so which two
+# files it picked has to be obvious from the package layout, not searched for.
+resolve_theme_root() {
+  local dir=$1 entry subdir="" count=0
+  track_for loop "$dir" > /dev/null && { printf '%s\n' "$dir"; return 0; }
+  for entry in "$dir"/*; do
+    [[ -d "$entry" ]] || continue
+    # macOS zip drops a __MACOSX sibling with the same tree of resource-fork
+    # files; it sits next to the real content directory, not inside it, so it
+    # would otherwise look like a second candidate root.
+    [[ "${entry##*/}" == "__MACOSX" ]] && continue
+    count=$((count + 1))
+    subdir=$entry
+  done
+  if [[ "$count" -eq 1 ]]; then
+    printf '%s\n' "$subdir"
+  else
+    printf '%s\n' "$dir"
+  fi
+}
+
+theme_install() {
+  local input=$1 tmp="" src loop_track done_track
+  [[ -n "$input" ]] || {
+    echo "thinklight: usage: thinklight theme install <package.zip|dir>" >&2
+    return 64
+  }
+  [[ -e "$input" ]] || {
+    echo "thinklight: no such file or directory: $input" >&2
+    return 65
+  }
+  if [[ -d "$input" ]]; then
+    # Given directly, not descended into: the user pointed at this directory
+    # on purpose, so guessing at a subdirectory inside it would be a surprise.
+    src=$input
+  else
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/thinklight-theme.XXXXXX") || return 1
+    # Cleanup runs when the whole CLI process exits, which is right after this
+    # command finishes either way — there is nothing after it in the case.
+    trap 'rm -rf "$tmp"' EXIT
+    # unzip (Info-ZIP, as shipped on macOS) strips ".." path segments from
+    # entry names before extracting, so a crafted entry cannot land outside
+    # $tmp; nothing further to guard against a hostile package here.
+    unzip -q "$input" -d "$tmp" || {
+      echo "thinklight: could not unzip $input" >&2
+      return 65
+    }
+    src=$(resolve_theme_root "$tmp")
+  fi
+
+  validate_theme_dir "$src" || return 65
+
+  mkdir -p "$SHARE" || {
+    echo "thinklight: cannot create the sound directory: $SHARE" >&2
+    return 1
+  }
+  # Delete before copying in the new tracks: a package that ships loop.mp3
+  # must not land next to a leftover loop.flac, or track_for would keep
+  # matching the old file by stem.
+  rm -f "$SHARE"/loop.* "$SHARE"/done.* || return 1
+
+  loop_track=$(track_for loop "$src") || return 1
+  done_track=$(track_for done "$src") || return 1
+  install -m 644 "$loop_track" "$SHARE/${loop_track##*/}" || return 1
+  install -m 644 "$done_track" "$SHARE/${done_track##*/}" || return 1
+
+  # theme.json is metadata, not a track: missing or corrupt, it must not
+  # block the install that just placed two perfectly good tracks.
+  if [[ -f "$src/theme.json" ]]; then
+    cp "$src/theme.json" "$SHARE/theme.json" || return 1
+  else
+    printf '{}\n' > "$SHARE/theme.json" || return 1
+  fi
+
+  reload_sound_if_on || return 1
+  theme_current
+}
+
+theme_reset() {
+  mkdir -p "$SHARE" || {
+    echo "thinklight: cannot create the sound directory: $SHARE" >&2
+    return 1
+  }
+  rm -f "$SHARE"/loop.* "$SHARE"/done.* "$SHARE/theme.json" || return 1
+  seed_default_tracks || return 1
+  reload_sound_if_on || return 1
+  theme_current
+}
+
 case "${1:-status}" in
   on)
     load_session_context || exit 1
@@ -507,6 +683,23 @@ case "${1:-status}" in
     ;;
   unmute)
     unmute_sound || exit 1
+    ;;
+  theme)
+    case "${2:-}" in
+      install)
+        theme_install "${3:-}" || exit $?
+        ;;
+      current)
+        theme_current
+        ;;
+      reset)
+        theme_reset || exit 1
+        ;;
+      *)
+        echo "thinklight: usage: thinklight theme install <package.zip|dir>|current|reset" >&2
+        exit 64
+        ;;
+    esac
     ;;
   update)
     if [[ "${2:-}" == "--check" ]]; then check_update; else perform_update; fi
@@ -566,7 +759,7 @@ case "${1:-status}" in
     if has_sessions; then ensure_daemon; fi
     ;;
   *)
-    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|version|update [--check]" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|theme install <pkg>|current|reset|version|update [--check]" >&2
     exit 64
     ;;
 esac

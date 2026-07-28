@@ -140,6 +140,9 @@ thinklight config           输出全部设置：声音、已装音轨、自动�
 thinklight config KEY VALUE 改一项设置：sound、bootstrap 或 update-check，取 on 或 off
 thinklight unmute           打开声音（首次会自动装上默认音轨）
 thinklight mute             关闭声音，音轨文件保留
+thinklight theme install P  从zip或目录装一套音轨主题（见下文）
+thinklight theme current    显示已装主题的名称、作者、许可、来源
+thinklight theme reset      删掉已装主题，恢复内置默认曲
 thinklight update --check   检查是否有新版
 thinklight update           更新 ThinkLight
 ```
@@ -161,6 +164,8 @@ thinklight config      # 当前状态和已装的音轨
 Claude Code插件里是同样的三个：`/thinklight:unmute`、`/thinklight:mute`、`/thinklight:config`。开关一秒内生效，所以`/thinklight:unmute`在它自己那一轮就能听见。
 
 第一次`unmute`会把两首默认音轨装到`~/.local/share/thinklight/`：`loop`循环播放，`done`播一次。想换成自己的直接替换文件，格式支持macOS能解码的常见类型（FLAC、MP3、WAV、AAC等），扩展名不限，只有`loop`和`done`这两个名字有意义；换完运行`thinklight mute && thinklight unmute`重新加载。之后再`unmute`不会覆盖你换过的音轨，删掉才会取回默认曲——安装和更新同样碰不到这两个文件，也改不了开关状态。（想放到别处：设`THINKLIGHT_SHARE_DIR`。）
+
+一首一首换是给自己用的；**音轨主题**是给分享用的——两首曲子打包在一起，带上名字和许可证。主题是一个zip或一个目录，里面是`loop.<ext>`和`done.<ext>`，外加一份写着`name`、`title`、`author`、`license`、`source`的`theme.json`。`thinklight theme install lofi-rain.zip`会先检查两首曲子是否齐全、格式是否是macOS能解码的，通过之前不会碰`~/.local/share/thinklight/`里的任何东西——包坏了就什么都不会变；包好了就会替换掉原来的曲子，旧格式的残留文件不会留下来，如果声音当时是开着的还会自动重载，装完那一轮就能听见。`thinklight theme current`显示当前装的主题信息，`thinklight theme reset`把它删掉、换回内置默认曲。`theme.json`缺失或解析不了不会挡着安装——音轨能播才是要紧事，`theme current`只是把名字显示成unknown。
 
 音量跟随系统音量。完成音还没放完你就派了新任务的话，它会被立刻掐断——「轮到你了」在下一轮开始的瞬间就过期了。`thinklight blink`走的是同一条on/off路径，所以打开声音后这个诊断命令也会响。
 

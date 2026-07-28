@@ -150,8 +150,8 @@ pass "a track of any extension fills its slot"
 # switchable in a place installers do not write, or an update would silently
 # turn it back on. An explicitly requested check is not covered: the user just
 # asked the question out loud.
-assert_eq "$(run_cli config | tail -1)" "update-check: on"
-assert_eq "$(run_cli config update-check off | tail -1)" "update-check: off"
+assert_eq "$(run_cli config | grep '^update-check:')" "update-check: on"
+assert_eq "$(run_cli config update-check off | grep '^update-check:')" "update-check: off"
 [[ -f "$SHARE_DIR/update-check-off" ]] || fail "the opt-out was not recorded beside the other settings"
 CHECK_STAMP="$STATE_DIR/update-check"
 # The check compares this install's revision against the remote, so a checkout is
@@ -161,7 +161,7 @@ rm -f "$CHECK_STAMP"
 run_hook UserPromptSubmit optout on
 [[ ! -e "$CHECK_STAMP" ]] || fail "an opted-out install still scheduled a check"
 run_hook Stop optout off
-assert_eq "$(run_cli config update-check on | tail -1)" "update-check: on"
+assert_eq "$(run_cli config update-check on | grep '^update-check:')" "update-check: on"
 run_hook UserPromptSubmit optin on
 [[ -f "$CHECK_STAMP" ]] || fail "turning the check back on did not schedule it"
 run_hook Stop optin off
@@ -613,3 +613,145 @@ done
 kill "$soundless_pid" 2>/dev/null || true
 wait "$soundless_pid" 2>/dev/null || true
 pass "unmute reaches a running daemon, and a missing track costs the cue, not the light"
+
+# --- Sound theme packages ------------------------------------------------------
+# A theme package is a loop track plus a done track plus optional metadata.
+# Installing one gets its own share directory so these cases do not depend on
+# the sound state the earlier tests left behind.
+THEME_SHARE="$TEST_ROOT/theme-share"
+THEME_WORK="$TEST_ROOT/theme-work"
+mkdir -p "$THEME_SHARE/defaults" "$THEME_WORK"
+printf 'builtin-loop' > "$THEME_SHARE/defaults/loop.flac"
+printf 'builtin-done' > "$THEME_SHARE/defaults/done.flac"
+
+run_theme_cli() {
+  env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$STATE_DIR" \
+    THINKLIGHT_SHARE_DIR="$THEME_SHARE" "$CLI" "$@"
+}
+
+# A track already in place, in a different format, must not survive the
+# install — track_for matches by stem, so a leftover loop.flac would keep
+# winning over the package's own loop.mp3.
+printf 'old-loop' > "$THEME_SHARE/loop.flac"
+printf 'old-done' > "$THEME_SHARE/done.flac"
+
+LOFI_PKG="$THEME_WORK/lofi-rain"
+mkdir -p "$LOFI_PKG"
+cat > "$LOFI_PKG/theme.json" <<'JSON'
+{"name":"lofi-rain","title":"Lofi Rain","author":"alice","license":"CC-BY-4.0","source":"https://example.com/themes/lofi-rain","version":1}
+JSON
+printf 'loop-audio' > "$LOFI_PKG/loop.mp3"
+printf 'done-audio' > "$LOFI_PKG/done.mp3"
+LOFI_ZIP="$THEME_WORK/lofi-rain.zip"
+(cd "$LOFI_PKG" && zip -q -r "$LOFI_ZIP" .)
+
+run_theme_cli theme install "$LOFI_ZIP" > /dev/null \
+  || fail "installing a zip theme package failed"
+assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.mp3"
+assert_eq "$(run_theme_cli config | grep '^done track:')" "done track: done.mp3"
+[[ ! -e "$THEME_SHARE/loop.flac" ]] || fail "install left the old loop track behind"
+[[ ! -e "$THEME_SHARE/done.flac" ]] || fail "install left the old done track behind"
+pass "installing a zip theme replaces the previous tracks"
+
+assert_eq "$(run_theme_cli theme current | grep '^name:')" "name: lofi-rain"
+assert_eq "$(run_theme_cli theme current | grep '^author:')" "author: alice"
+assert_eq "$(run_theme_cli theme current | grep '^license:')" "license: CC-BY-4.0"
+pass "theme current reports the installed package's metadata"
+
+FOREST_PKG="$THEME_WORK/forest"
+mkdir -p "$FOREST_PKG"
+printf '{"name":"forest","author":"bob","license":"CC0","source":"local"}' > "$FOREST_PKG/theme.json"
+printf 'forest-loop' > "$FOREST_PKG/loop.wav"
+printf 'forest-done' > "$FOREST_PKG/done.wav"
+run_theme_cli theme install "$FOREST_PKG" > /dev/null \
+  || fail "installing a directory theme package failed"
+assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.wav"
+[[ ! -e "$THEME_SHARE/loop.mp3" ]] || fail "installing a directory package left the previous package's tracks"
+pass "installing a directory package works the same as a zip"
+
+BAD_MISSING_DONE="$THEME_WORK/bad-missing-done"
+mkdir -p "$BAD_MISSING_DONE"
+printf 'x' > "$BAD_MISSING_DONE/loop.mp3"
+run_theme_cli theme install "$BAD_MISSING_DONE" > /dev/null 2>&1 \
+  && fail "a package missing a done track was accepted"
+assert_eq "$(cat "$THEME_SHARE/loop.wav")" "forest-loop"
+assert_eq "$(cat "$THEME_SHARE/done.wav")" "forest-done"
+[[ ! -e "$THEME_SHARE/loop.mp3" ]] || fail "a rejected package's tracks leaked into place"
+pass "a package missing a done track is rejected without touching the installed tracks"
+
+BAD_EXT_PKG="$THEME_WORK/bad-ext"
+mkdir -p "$BAD_EXT_PKG"
+printf 'x' > "$BAD_EXT_PKG/loop.txt"
+printf 'x' > "$BAD_EXT_PKG/done.mp3"
+run_theme_cli theme install "$BAD_EXT_PKG" > /dev/null 2>&1 \
+  && fail "a track with an unsupported extension was accepted"
+[[ ! -e "$THEME_SHARE/loop.txt" ]] || fail "a rejected extension leaked into place"
+pass "a track with an unsupported extension is rejected"
+
+NO_META_PKG="$THEME_WORK/no-metadata"
+mkdir -p "$NO_META_PKG"
+printf 'x' > "$NO_META_PKG/loop.aiff"
+printf 'x' > "$NO_META_PKG/done.aiff"
+run_theme_cli theme install "$NO_META_PKG" > /dev/null \
+  || fail "a package with no theme.json was rejected"
+assert_eq "$(run_theme_cli theme current | grep '^name:')" "name: unknown"
+pass "a missing theme.json does not block installation, only the metadata"
+
+run_theme_cli theme reset > /dev/null || fail "theme reset failed"
+assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.flac"
+assert_eq "$(cat "$THEME_SHARE/loop.flac")" "builtin-loop"
+assert_eq "$(run_theme_cli theme current | grep '^name:')" "name: default"
+pass "theme reset restores the bundled default tracks"
+
+run_theme_cli unmute > /dev/null
+[[ -f "$THEME_SHARE/sound-on" ]] || fail "unmute did not turn sound on for the reload test"
+run_theme_cli theme install "$LOFI_ZIP" > /dev/null \
+  || fail "installing a theme while sound is on failed"
+assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.mp3"
+[[ -f "$THEME_SHARE/sound-on" ]] || fail "installing a theme with sound on turned sound off"
+pass "installing a theme while sound is on reloads it and leaves sound on"
+
+# Finder's "Compress" on a folder is the most natural way to hand-build a
+# package, and it wraps the contents in a top-level directory instead of
+# zipping them flat.
+NESTED_PKG_DIR="$THEME_WORK/nested-src"
+mkdir -p "$NESTED_PKG_DIR/lofi-rain"
+printf '{"name":"lofi-rain"}' > "$NESTED_PKG_DIR/lofi-rain/theme.json"
+printf 'nested-loop' > "$NESTED_PKG_DIR/lofi-rain/loop.mp3"
+printf 'nested-done' > "$NESTED_PKG_DIR/lofi-rain/done.mp3"
+NESTED_ZIP="$THEME_WORK/nested.zip"
+(cd "$NESTED_PKG_DIR" && zip -q -r "$NESTED_ZIP" lofi-rain)
+
+run_theme_cli theme install "$NESTED_ZIP" > /dev/null \
+  || fail "installing a Finder-style nested zip failed"
+assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.mp3"
+assert_eq "$(cat "$THEME_SHARE/loop.mp3")" "nested-loop"
+pass "a zip wrapping its contents in one top-level directory installs anyway"
+
+# macOS zip also drops a __MACOSX sibling next to the real content directory;
+# that must not be mistaken for a second package root.
+MACOSX_PKG_DIR="$THEME_WORK/macosx-src"
+mkdir -p "$MACOSX_PKG_DIR/rainy-day" "$MACOSX_PKG_DIR/__MACOSX/rainy-day"
+printf '{"name":"rainy-day"}' > "$MACOSX_PKG_DIR/rainy-day/theme.json"
+printf 'rainy-loop' > "$MACOSX_PKG_DIR/rainy-day/loop.wav"
+printf 'rainy-done' > "$MACOSX_PKG_DIR/rainy-day/done.wav"
+printf 'resource-fork' > "$MACOSX_PKG_DIR/__MACOSX/rainy-day/._loop.wav"
+MACOSX_ZIP="$THEME_WORK/macosx.zip"
+(cd "$MACOSX_PKG_DIR" && zip -q -r "$MACOSX_ZIP" rainy-day __MACOSX)
+
+run_theme_cli theme install "$MACOSX_ZIP" > /dev/null \
+  || fail "installing a zip with a __MACOSX sibling directory failed"
+assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.wav"
+assert_eq "$(cat "$THEME_SHARE/loop.wav")" "rainy-loop"
+pass "a __MACOSX sibling directory is ignored when finding the package root"
+
+# A directory given directly is used as-is — the user pointed at it on
+# purpose, so descending into a subdirectory of it would be a surprise.
+WRAPPED_DIR_PKG="$THEME_WORK/wrapped-dir"
+mkdir -p "$WRAPPED_DIR_PKG/lofi-rain"
+printf '{"name":"lofi-rain"}' > "$WRAPPED_DIR_PKG/lofi-rain/theme.json"
+printf 'x' > "$WRAPPED_DIR_PKG/lofi-rain/loop.mp3"
+printf 'x' > "$WRAPPED_DIR_PKG/lofi-rain/done.mp3"
+run_theme_cli theme install "$WRAPPED_DIR_PKG" > /dev/null 2>&1 \
+  && fail "a directory input descended into its own subdirectory"
+pass "a directory package is never descended into, only a zip is"
