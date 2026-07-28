@@ -38,11 +38,18 @@ Turn it off with `thinklight config bootstrap off`, or `THINKLIGHT_NO_BOOTSTRAP=
 before anything is installed; then install the programs yourself with the line
 below.
 
-## Three commands, yours only
+## Commands, yours only
 
 `/thinklight:unmute`, `/thinklight:mute`, and `/thinklight:config` control the
-optional sound. Sound is off until you turn it on. All three are marked
+optional sound; `/thinklight:theme-current` reports which sound theme is
+installed. Sound is off until you turn it on. All four are marked
 `disable-model-invocation`, so Claude cannot trigger them on its own.
+
+Installing or resetting a sound theme — a shared `loop`/`done` pair with a name
+and a license attached — is CLI-only: `thinklight theme install
+<package.zip|dir>` and `thinklight theme reset`. Installing takes a file path
+to the package, which does not fit a slash command; `theme current`, the one
+part of that worth a shortcut, is the skill above.
 
 ## Installing the programs yourself
 

@@ -37,7 +37,7 @@ DEFAULT_TRACKS="$SHARE/defaults"
 # What AVAudioPlayer can actually decode. A theme package is checked against
 # this up front, so a format it cannot play is rejected at install time rather
 # than failing silently the first time the daemon tries to load it.
-SOUND_EXTS="mp3 flac wav m4a aac aiff caf"
+SOUND_EXTS="mp3 flac wav m4a aac aiff aif caf"
 # Settings a user chose belong beside the tracks, out of reach of installers,
 # for the same reason: an update must not be able to switch the background
 # update check back on for someone who turned it off.
@@ -388,7 +388,13 @@ ext_allowed() {
 }
 
 # No jq: theme.json's fields are single-line strings, so a sed capture on the
-# `"key": "value"` shape covers every theme this format asks for.
+# `"key": "value"` shape covers every theme this format asks for. The pattern
+# anchors on the quoted key, so "filename" cannot be mistaken for "name" nor
+# "subtitle" for "title" — but only reads top-level fields: `.*` is greedy,
+# so a nested object, or any value that itself contains `"key": "..."`, would
+# make this return the last match in the file instead of the top-level one.
+# Fine for the flat layout this format documents; nested metadata would need
+# more than sed.
 theme_field() {
   local key=$1 file=$2
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" 2>/dev/null | head -n1
@@ -567,7 +573,7 @@ resolve_theme_root() {
 }
 
 theme_install() {
-  local input=$1 tmp="" src loop_track done_track
+  local input=$1 tmp="" src loop_track done_track staged
   [[ -n "$input" ]] || {
     echo "thinklight: usage: thinklight theme install <package.zip|dir>" >&2
     return 64
@@ -581,7 +587,17 @@ theme_install() {
     # on purpose, so guessing at a subdirectory inside it would be a surprise.
     src=$input
   else
-    tmp=$(mktemp -d "${TMPDIR:-/tmp}/thinklight-theme.XXXXXX") || return 1
+    # unzip and "could not unzip" used to be the same message for "not
+    # installed" and "not a zip"; telling them apart tells the user which one
+    # to go fix.
+    command -v unzip > /dev/null 2>&1 || {
+      echo "thinklight: unzip is required to install a zip theme package" >&2
+      return 1
+    }
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/thinklight-theme.XXXXXX") || {
+      echo "thinklight: could not create a temporary directory" >&2
+      return 1
+    }
     # Cleanup runs when the whole CLI process exits, which is right after this
     # command finishes either way — there is nothing after it in the case.
     trap 'rm -rf "$tmp"' EXIT
@@ -589,7 +605,7 @@ theme_install() {
     # entry names before extracting, so a crafted entry cannot land outside
     # $tmp; nothing further to guard against a hostile package here.
     unzip -q "$input" -d "$tmp" || {
-      echo "thinklight: could not unzip $input" >&2
+      echo "thinklight: could not unzip $input — it may not be a valid zip file" >&2
       return 65
     }
     src=$(resolve_theme_root "$tmp")
@@ -601,25 +617,86 @@ theme_install() {
     echo "thinklight: cannot create the sound directory: $SHARE" >&2
     return 1
   }
-  # Delete before copying in the new tracks: a package that ships loop.mp3
-  # must not land next to a leftover loop.flac, or track_for would keep
-  # matching the old file by stem.
-  rm -f "$SHARE"/loop.* "$SHARE"/done.* || return 1
 
-  loop_track=$(track_for loop "$src") || return 1
-  done_track=$(track_for done "$src") || return 1
-  install -m 644 "$loop_track" "$SHARE/${loop_track##*/}" || return 1
-  install -m 644 "$done_track" "$SHARE/${done_track##*/}" || return 1
+  # Assemble the new theme in a staging directory before touching anything
+  # installed. Every step below this point can fail — including $src being
+  # $SHARE itself, e.g. installing an already-installed theme from where
+  # `theme current` says it lives — and until the final mv, the previous
+  # theme is untouched. $SHARE/.staged matches neither loop.*/done.* nor the
+  # daemon's stem match, so it is invisible to everything else while it
+  # exists.
+  # Both are silenced so the failure reads as one sentence: mkdir's own
+  # "Permission denied" says the same thing a line earlier, in a different
+  # voice, and the line that matters is the one naming what ThinkLight was
+  # trying to do.
+  staged="$SHARE/.staged"
+  rm -rf "$staged" 2>/dev/null || {
+    echo "thinklight: cannot clear the staging directory: $staged" >&2
+    return 1
+  }
+  mkdir -p "$staged" 2>/dev/null || {
+    echo "thinklight: cannot create the staging directory: $staged" >&2
+    return 1
+  }
+
+  loop_track=$(track_for loop "$src") || {
+    rm -rf "$staged"
+    echo "thinklight: theme package is missing a loop track (loop.<ext>)" >&2
+    return 1
+  }
+  done_track=$(track_for done "$src") || {
+    rm -rf "$staged"
+    echo "thinklight: theme package is missing a done track (done.<ext>)" >&2
+    return 1
+  }
+  install -m 644 "$loop_track" "$staged/${loop_track##*/}" || {
+    rm -rf "$staged"
+    echo "thinklight: could not stage the loop track" >&2
+    return 1
+  }
+  install -m 644 "$done_track" "$staged/${done_track##*/}" || {
+    rm -rf "$staged"
+    echo "thinklight: could not stage the done track" >&2
+    return 1
+  }
 
   # theme.json is metadata, not a track: missing or corrupt, it must not
-  # block the install that just placed two perfectly good tracks.
+  # block the install that just staged two perfectly good tracks.
   if [[ -f "$src/theme.json" ]]; then
-    cp "$src/theme.json" "$SHARE/theme.json" || return 1
+    cp "$src/theme.json" "$staged/theme.json" || {
+      rm -rf "$staged"
+      echo "thinklight: could not stage theme metadata" >&2
+      return 1
+    }
   else
-    printf '{}\n' > "$SHARE/theme.json" || return 1
+    printf '{}\n' > "$staged/theme.json" || {
+      rm -rf "$staged"
+      echo "thinklight: could not stage theme metadata" >&2
+      return 1
+    }
   fi
 
-  reload_sound_if_on || return 1
+  # Both tracks and the metadata are on disk under $staged now. From here,
+  # $staged is on the same filesystem as $SHARE, so the mv below is a rename
+  # per file rather than a copy — there is nothing left that ordinarily
+  # fails. Delete before moving in the new tracks: a package that ships
+  # loop.mp3 must not land next to a leftover loop.flac, or track_for would
+  # keep matching the old file by stem.
+  rm -f "$SHARE"/loop.* "$SHARE"/done.* "$SHARE/theme.json" || {
+    echo "thinklight: could not remove the previous theme; the new one is staged at $staged — run theme install again" >&2
+    return 1
+  }
+  mv "$staged"/* "$SHARE"/ || {
+    echo "thinklight: could not move the new theme into place; $SHARE may be missing tracks — run theme install again" >&2
+    return 1
+  }
+  rm -rf "$staged"
+
+  # A reload failure means the tracks are installed but the daemon has not
+  # picked them up yet — a nuisance, not a failed install; the tracks are
+  # already on disk by this point.
+  reload_sound_if_on \
+    || echo "thinklight: theme installed, but could not reload sound; run thinklight mute && thinklight unmute" >&2
   theme_current
 }
 
@@ -628,9 +705,16 @@ theme_reset() {
     echo "thinklight: cannot create the sound directory: $SHARE" >&2
     return 1
   }
-  rm -f "$SHARE"/loop.* "$SHARE"/done.* "$SHARE/theme.json" || return 1
-  seed_default_tracks || return 1
-  reload_sound_if_on || return 1
+  rm -f "$SHARE"/loop.* "$SHARE"/done.* "$SHARE/theme.json" || {
+    echo "thinklight: could not remove the installed theme" >&2
+    return 1
+  }
+  seed_default_tracks || {
+    echo "thinklight: could not restore the bundled default tracks" >&2
+    return 1
+  }
+  reload_sound_if_on \
+    || echo "thinklight: theme reset, but could not reload sound; run thinklight mute && thinklight unmute" >&2
   theme_current
 }
 

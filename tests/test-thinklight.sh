@@ -711,6 +711,20 @@ assert_eq "$(run_theme_cli config | grep '^loop track:')" "loop track: loop.mp3"
 [[ -f "$THEME_SHARE/sound-on" ]] || fail "installing a theme with sound on turned sound off"
 pass "installing a theme while sound is on reloads it and leaves sound on"
 
+# theme_install used to validate the source, then rm the installed tracks,
+# then look for the new ones — fine when the source is a temp extraction dir,
+# but when someone points install at $SHARE itself (an easy mistake, since
+# that is where an already-installed theme visibly lives) the rm ran before
+# track_for ever looked, deleting both tracks before they could be copied
+# anywhere. Installing $SHARE as its own package must be a harmless no-op.
+before_loop=$(cat "$THEME_SHARE/loop.mp3")
+before_done=$(cat "$THEME_SHARE/done.mp3")
+run_theme_cli theme install "$THEME_SHARE" > /dev/null \
+  || fail "installing a theme package that is \$SHARE itself failed"
+assert_eq "$(cat "$THEME_SHARE/loop.mp3")" "$before_loop"
+assert_eq "$(cat "$THEME_SHARE/done.mp3")" "$before_done"
+pass "installing a theme package that is \$SHARE itself is a no-op"
+
 # Finder's "Compress" on a folder is the most natural way to hand-build a
 # package, and it wraps the contents in a top-level directory instead of
 # zipping them flat.
@@ -755,3 +769,53 @@ printf 'x' > "$WRAPPED_DIR_PKG/lofi-rain/done.mp3"
 run_theme_cli theme install "$WRAPPED_DIR_PKG" > /dev/null 2>&1 \
   && fail "a directory input descended into its own subdirectory"
 pass "a directory package is never descended into, only a zip is"
+
+# A path that does not exist is a usage error, not a package to attempt.
+rc=0
+run_theme_cli theme install "$THEME_WORK/does-not-exist" > /dev/null 2>&1 || rc=$?
+assert_eq "$rc" "65"
+pass "installing a nonexistent path exits 65"
+
+# A regular file unzip cannot read is rejected outright; the theme already in
+# place must survive exactly as it was.
+NOT_A_ZIP="$THEME_WORK/not-a-zip.zip"
+printf 'definitely not a zip file' > "$NOT_A_ZIP"
+before_loop=$(cat "$THEME_SHARE/loop.wav")
+before_done=$(cat "$THEME_SHARE/done.wav")
+rc=0
+run_theme_cli theme install "$NOT_A_ZIP" > /dev/null 2>&1 || rc=$?
+[[ "$rc" -ne 0 ]] || fail "a non-zip file was accepted as a theme package"
+assert_eq "$(cat "$THEME_SHARE/loop.wav")" "$before_loop"
+assert_eq "$(cat "$THEME_SHARE/done.wav")" "$before_done"
+pass "a file that is not a zip is rejected without touching the installed theme"
+
+# `config`'s theme: line is a separate read path from `theme current`'s name:
+# field — both have to agree across an installed theme, a reset, and a theme
+# with no metadata.
+run_theme_cli theme install "$LOFI_ZIP" > /dev/null \
+  || fail "installing the lofi theme for the config test failed"
+assert_eq "$(run_theme_cli config | grep '^theme:')" "theme: lofi-rain"
+pass "config's theme line names the installed theme"
+
+run_theme_cli theme reset > /dev/null || fail "theme reset for the config test failed"
+assert_eq "$(run_theme_cli config | grep '^theme:')" "theme: default"
+pass "config's theme line reads default after theme reset"
+
+run_theme_cli theme install "$NO_META_PKG" > /dev/null \
+  || fail "installing the no-metadata package for the config test failed"
+assert_eq "$(run_theme_cli config | grep '^theme:')" "theme: unknown"
+pass "config's theme line reads unknown for a package with no theme.json"
+
+# A theme.json that is present but fails to parse is a different code path
+# than one that is missing entirely: theme_install copies it verbatim instead
+# of writing a fresh `{}`, so this needs its own package to exercise.
+CORRUPT_META_PKG="$THEME_WORK/corrupt-metadata"
+mkdir -p "$CORRUPT_META_PKG"
+printf 'not valid json at all {{{' > "$CORRUPT_META_PKG/theme.json"
+printf 'x' > "$CORRUPT_META_PKG/loop.mp3"
+printf 'x' > "$CORRUPT_META_PKG/done.mp3"
+run_theme_cli theme install "$CORRUPT_META_PKG" > /dev/null \
+  || fail "a package with a corrupt theme.json was rejected"
+assert_eq "$(run_theme_cli theme current | grep '^name:')" "name: unknown"
+assert_eq "$(run_theme_cli config | grep '^theme:')" "theme: unknown"
+pass "a theme.json that fails to parse does not block installation, only the metadata"
