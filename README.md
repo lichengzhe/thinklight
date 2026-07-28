@@ -185,6 +185,9 @@ thinklight config           print every setting: sound, tracks, bootstrap, updat
 thinklight config KEY VALUE change one setting: sound, bootstrap, or update-check, on or off
 thinklight unmute           turn sound on (installs the default tracks on first use)
 thinklight mute             turn sound off, keeping the tracks in place
+thinklight theme install P  install a sound theme from a zip or a directory (see below)
+thinklight theme current    print the installed theme's name, author, license, and source
+thinklight theme reset      restore the bundled default tracks, replacing any you placed by hand
 thinklight update --check   check for a new version
 thinklight update           update ThinkLight
 ```
@@ -233,6 +236,24 @@ unmute` to pick up a replacement. A later `unmute` never overwrites a track you
 chose, and deleting one is how you get the bundled default back — installing or
 updating ThinkLight touches neither those files nor the switch. (Set
 `THINKLIGHT_SHARE_DIR` to keep them somewhere else.)
+
+Replacing one file at a time is fine for your own tracks; a **sound theme** is
+for sharing both at once with a name and a license attached. It is a zip or a
+directory containing `loop.<ext>` and `done.<ext>` plus an optional
+`theme.json` with `name`, `title`, `author`, `license`, and `source`.
+`thinklight theme install lofi-rain.zip` checks that both tracks are present
+and in a format macOS can decode before it touches anything under
+`~/.local/share/thinklight/`, so a bad package changes nothing; a good one
+replaces whatever was there — old tracks in a different format do not linger
+behind the new ones — and reloads sound if it was already on, so the theme is
+audible in the same turn that installed it. `thinklight theme current` prints
+the installed theme's metadata. A `theme.json` that is missing or fails to
+parse does not block the install — the tracks are what matter, and
+`theme current` just reports the name as unknown.
+
+`thinklight theme reset` always restores the bundled default tracks, even over
+ones you swapped in by hand — that is what "reset" means, and running it is
+how you ask for the built-in loop and chime back.
 
 Volume follows system volume; ThinkLight does not adjust it separately. Starting
 a new turn cuts off a completion chime that is still playing — "your turn" goes
