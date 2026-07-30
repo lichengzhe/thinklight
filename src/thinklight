@@ -245,6 +245,13 @@ installed_from_source() {
   [[ -s "$REVISION_FILE" ]]
 }
 
+version_at_least() {
+  local candidate=$1 baseline=$2
+  [[ "$candidate" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ "$baseline" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ "$(printf '%s\n%s\n' "$candidate" "$baseline" | sort -V | tail -1)" == "$candidate" ]]
+}
+
 # Prints "current VERSION" or "behind INSTALLED LATEST". Returns 1 when the
 # installed version is unrecorded and 2 when GitHub cannot be reached, so a
 # caller can tell the two silences apart. Both the check the user asks for and
@@ -258,8 +265,7 @@ release_status() {
   # Installed ahead of the newest published release is a real state rather than an
   # update: the plugin installs the release matching itself, and between a version
   # bump and its release build that version is the newer one.
-  if [[ "$installed" == "$remote" ]] ||
-    [[ "$(printf '%s\n%s\n' "$installed" "$remote" | sort -V | tail -1)" == "$installed" ]]; then
+  if version_at_least "$installed" "$remote"; then
     printf 'current %s\n' "$installed"
   else
     printf 'behind %s %s\n' "$installed" "$remote"
@@ -820,7 +826,11 @@ case "${1:-status}" in
     plugin_version="${2:-}"
     installed=$(cat "$VERSION_FILE" 2>/dev/null)
     [[ -n "$plugin_version" && -n "$installed" ]] || exit 0
-    [[ "$plugin_version" != "$installed" ]] || exit 0
+    # Claude and Codex can update the same plugin at different times while
+    # sharing this one program install. A lagging plugin is already served by
+    # newer programs; calling that state out of date would be both false and,
+    # with an older bootstrap hook, part of an upgrade/downgrade loop.
+    version_at_least "$installed" "$plugin_version" && exit 0
     [[ "$(cat "$VERSION_NOTICE_FILE" 2>/dev/null)" != "$plugin_version" ]] || exit 0
     mkdir -p "$STATE" || exit 0
     printf '%s\n' "$plugin_version" > "$VERSION_NOTICE_FILE"

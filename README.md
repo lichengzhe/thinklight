@@ -206,11 +206,13 @@ is not a background one.
 The plugin closes the other gap by itself. It updates while the programs in
 `~/.local/bin` do not, so the two could drift into a combination nobody chose:
 new hooks calling an old CLI. At session start it compares the two versions and,
-when they differ, downloads and installs the programs for its own version, then
-notifies you. It tries once per plugin version, says what it did, and steps aside
-in the two cases where the decision is not its to make: a source install keeps
-`thinklight update` in charge, and `thinklight config bootstrap off` reduces it to
-reporting the gap the way it used to.
+when the programs are missing or older, downloads and installs the programs for
+its own version, then notifies you. Newer programs are left alone so Claude and
+Codex cannot downgrade a shared install while their plugin updates arrive at
+different times. It tries once per plugin version, says what it did, and steps
+aside in the two cases where the decision is not its to make: a source install
+keeps `thinklight update` in charge, and `thinklight config bootstrap off`
+reduces it to reporting the gap the way it used to.
 
 ## Sound (optional, off by default)
 

@@ -1,6 +1,6 @@
 {
   "name": "thinklight",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "description": "macOS only. Turns the Mac's camera LED into an AI busy light: on while the agent works, off when it's your turn. To light that LED it opens the built-in camera (plus a Studio Display camera when docked) and discards every frame in the callback — no image processing, no recording, no disk writes. Its hooks fire on every turn to write a local session token naming the session id and owning pid; no prompt or response content is read, and nothing leaves the machine. The LED needs a small daemon that this plugin cannot run from inside itself, so on its first session it downloads the matching signed release from this repository's GitHub Releases and installs three programs into ~/.local/bin, then notifies you; `thinklight config bootstrap off` (or THINKLIGHT_NO_BOOTSTRAP=1) turns that off and leaves you to run get.sh or install.sh yourself. Optional sound stays off until you run /thinklight:unmute; from there `thinklight theme install` swaps in a shared pair of tracks as one package, and /thinklight:theme-current says which one is playing.",
   "author": {
     "name": "lichengzhe",

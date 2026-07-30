@@ -22,9 +22,18 @@ share="${THINKLIGHT_SHARE_DIR:-$HOME/.local/share/thinklight}"
 version=$(/usr/bin/plutil -extract version raw -o - \
   "$root/.claude-plugin/plugin.json" 2>/dev/null) || exit 0
 
-# The common case, and all it costs is two reads.
+# The programs live outside either host's plugin cache, so Claude and Codex can
+# briefly see different plugin versions while their marketplaces update. An
+# older plugin must remain compatible with newer programs instead of pinning the
+# shared install backwards and starting an upgrade/downgrade loop.
 installed=$(cat "$state/version" 2>/dev/null)
-[[ -x "$cli" && "$installed" == "$version" ]] && exit 0
+if [[ -x "$cli" ]]; then
+  [[ "$installed" == "$version" ]] && exit 0
+  if [[ "$installed" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+    [[ "$(printf '%s\n%s\n' "$installed" "$version" | sort -V | tail -1)" == "$installed" ]]; then
+    exit 0
+  fi
+fi
 
 # Reporting the gap is what this hook did before it could close one, and it is
 # still the right answer whenever installing is not ours to do.

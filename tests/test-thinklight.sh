@@ -277,6 +277,8 @@ notify() {
 printf '9.9.9\n' > "$NOTIFY_STATE/version"
 assert_eq "$(notify 9.9.9)" ""
 [[ ! -e "$NOTIFY_STATE/version-notice" ]] || fail "matching versions still recorded a notice"
+assert_eq "$(notify 9.9.8)" ""
+[[ ! -e "$NOTIFY_STATE/version-notice" ]] || fail "an older plugin reported newer programs as stale"
 assert_eq "$(notify 9.9.10)" ""
 assert_eq "$(cat "$NOTIFY_STATE/version-notice")" "9.9.10"
 notice_stamp=$(stat -f %m "$NOTIFY_STATE/version-notice")
@@ -357,6 +359,21 @@ sleep 0.5
 [[ ! -e "$INSTALLER_LOG" ]] || fail "an up-to-date install was reinstalled"
 [[ ! -e "$CLI_LOG" ]] || fail "an up-to-date install was still reported as drifted"
 pass "matching versions cost nothing"
+
+# Claude and Codex share the programs but update their plugin caches
+# independently. A lagging plugin must accept newer programs or the two hosts
+# alternately downgrade and upgrade the same install on every session start.
+printf '99.0.0\n' > "$BOOT_STATE/version"
+attempt_before=$(cat "$BOOT_STATE/bootstrap-attempt")
+attempt_stamp_before=$(stat -f %m "$BOOT_STATE/bootstrap-attempt")
+rm -f "$INSTALLER_LOG" "$CLI_LOG"
+session_start
+sleep 0.5
+[[ ! -e "$INSTALLER_LOG" ]] || fail "an older plugin downgraded newer programs"
+[[ ! -e "$CLI_LOG" ]] || fail "an older plugin reported newer programs as drifted"
+assert_eq "$(cat "$BOOT_STATE/bootstrap-attempt")" "$attempt_before"
+assert_eq "$(stat -f %m "$BOOT_STATE/bootstrap-attempt")" "$attempt_stamp_before"
+pass "a lagging plugin accepts newer shared programs without downgrading them"
 
 # A session start is not new information about a download that already ran, so
 # drift alone must not restart it.
