@@ -341,6 +341,9 @@ knowing.
   at the other end" is a fair reading of it, but it is the price of the rule.
 - **Two hops.** A → B → C carries no light to A yet; the middle machine would
   have to relay, and it does not.
+- **Names.** Sessions are filed under the far machine's hostname, so two servers
+  never collide. Set `THINKLIGHT_HOST_ID` where that hostname is a container id
+  nobody chose, or is the same as somebody else's.
 
 ## Privacy, resources, and compatibility
 

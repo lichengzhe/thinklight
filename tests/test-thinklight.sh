@@ -893,11 +893,17 @@ FAR_DAEMON="$FAR_BIN/thinklight-daemon"
 mkdir -p "$FAR_BIN" "$FAR_STATE/sessions"
 swiftc "$ROOT/tests/fake-daemon.swift" -o "$FAR_DAEMON"
 
+# A fixed name for the far side rather than whatever hostname reports: a CI
+# runner can be renamed mid-run, and a token named after the old one is a test
+# failure that says nothing about the code.
+FAR_HOST=far-test
+
 run_far() {
   local port=$1
   shift
   env THINKLIGHT_BIN_DIR="$FAR_BIN" THINKLIGHT_STATE_DIR="$FAR_STATE" \
-    THINKLIGHT_SHARE_DIR="$FAR_SHARE" THINKLIGHT_PORT="$port" "$CLI" "$@"
+    THINKLIGHT_SHARE_DIR="$FAR_SHARE" THINKLIGHT_PORT="$port" \
+    THINKLIGHT_HOST_ID="$FAR_HOST" "$CLI" "$@"
 }
 
 far_hook() {
@@ -906,10 +912,6 @@ far_hook() {
   printf '{"hook_event_name":"%s","session_id":"%s"}\n' "$event" "$session" \
     | run_far "$port" "$@"
 }
-
-far_host=$(hostname -s 2>/dev/null || hostname)
-far_host=${far_host//[^A-Za-z0-9_-]/-}
-far_host=${far_host:0:64}
 
 await_token() {
   local path=$1 _
@@ -929,9 +931,10 @@ await_no_token() {
   return 1
 }
 
-ALPHA="$TUNNEL_STATE/sessions/@$far_host.alpha"
+ALPHA="$TUNNEL_STATE/sessions/@$FAR_HOST.alpha"
 far_hook "$relay_port" UserPromptSubmit alpha on
-await_token "$ALPHA" || fail "a session on the far side never reached the light"
+await_token "$ALPHA" \
+  || fail "a session on the far side never reached the light; the daemon holds [$(ls -a "$TUNNEL_STATE/sessions" | tr '\n' ' ')]"
 assert_eq "$(sed -n '1p' "$ALPHA")" "remote"
 assert_eq "$(sed -n '4p' "$ALPHA")" "alpha"
 [[ -z "$(ls -A "$FAR_STATE/sessions")" ]] || fail "the far side recorded a session of its own"
@@ -942,7 +945,7 @@ pass "a session on another machine lights this one and puts it out again"
 
 # No pid from over there means anything here, so the connection is the liveness:
 # an agent that dies without ever running `off` still takes its session with it.
-BETA="$TUNNEL_STATE/sessions/@$far_host.beta"
+BETA="$TUNNEL_STATE/sessions/@$FAR_HOST.beta"
 far_hook "$relay_port" UserPromptSubmit beta on
 await_token "$BETA" || fail "the second session never reached the light"
 holder_pid=$(pgrep -f "$CLI on" | head -1 || true)
@@ -956,11 +959,13 @@ pass "an agent that dies without running off drops its session with the connecti
 printf '%s\n%s\n%s\n%s\n' "$$" "" "" "homegrown" > "$TUNNEL_STATE/sessions/homegrown"
 far_hook "$relay_port" UserPromptSubmit gamma on
 far_hook "$relay_port" UserPromptSubmit delta on
-await_token "$TUNNEL_STATE/sessions/@$far_host.gamma" || fail "gamma never arrived"
-await_token "$TUNNEL_STATE/sessions/@$far_host.delta" || fail "delta never arrived"
+await_token "$TUNNEL_STATE/sessions/@$FAR_HOST.gamma" \
+  || fail "gamma never arrived; the daemon holds [$(ls -a "$TUNNEL_STATE/sessions" | tr '\n' ' ')]"
+await_token "$TUNNEL_STATE/sessions/@$FAR_HOST.delta" \
+  || fail "delta never arrived; the daemon holds [$(ls -a "$TUNNEL_STATE/sessions" | tr '\n' ' ')]"
 run_far "$relay_port" off --force </dev/null > /dev/null 2>&1 || true
-await_no_token "$TUNNEL_STATE/sessions/@$far_host.gamma" || fail "gamma survived off --force"
-await_no_token "$TUNNEL_STATE/sessions/@$far_host.delta" || fail "delta survived off --force"
+await_no_token "$TUNNEL_STATE/sessions/@$FAR_HOST.gamma" || fail "gamma survived off --force"
+await_no_token "$TUNNEL_STATE/sessions/@$FAR_HOST.delta" || fail "delta survived off --force"
 [[ -f "$TUNNEL_STATE/sessions/homegrown" ]] \
   || fail "off --force on the far side cleared this machine's own session"
 rm -f "$TUNNEL_STATE/sessions/homegrown"
@@ -1024,7 +1029,7 @@ decoy_port=$(wait_for_port "$DECOY_OUT") || fail "the decoy listener never came 
 far_hook "$decoy_port" UserPromptSubmit zeta on
 await_token "$FAR_STATE/sessions/zeta" \
   || fail "a port that is not ThinkLight left the session nowhere"
-[[ ! -e "$TUNNEL_STATE/sessions/@$far_host.zeta" ]] \
+[[ ! -e "$TUNNEL_STATE/sessions/@$FAR_HOST.zeta" ]] \
   || fail "a session went to the light through a port that never greeted it"
 far_hook "$decoy_port" Stop zeta off
 run_far "$decoy_port" off --force </dev/null > /dev/null 2>&1 || true
@@ -1033,7 +1038,7 @@ pass "a listener that does not greet is not mistaken for the light"
 
 # The ssh session going away is the same event as the agent going away: the
 # connection ends either way, and nothing is left holding the light on.
-EPSILON="$TUNNEL_STATE/sessions/@$far_host.epsilon"
+EPSILON="$TUNNEL_STATE/sessions/@$FAR_HOST.epsilon"
 far_hook "$relay_port" UserPromptSubmit epsilon on
 await_token "$EPSILON" || fail "the last session never reached the light"
 kill "$RELAY_PID" 2>/dev/null || true

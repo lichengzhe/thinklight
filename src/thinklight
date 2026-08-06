@@ -155,12 +155,17 @@ remove_context_tokens() {
 }
 
 # The far side is named so two servers cannot land on one token, and named from
-# characters the daemon will accept in a filename: it turns this into one.
+# characters the daemon will accept in a filename: it turns this into one. The
+# daemon rejects an empty name, so a machine that cannot say what it is called
+# still gets a name rather than losing every session it sends. THINKLIGHT_HOST_ID
+# is for the machines whose hostname is a container id nobody chose, or is the
+# same as somebody else's.
 tunnel_host_id() {
-  local id
-  id=$(hostname -s 2>/dev/null) || id=$(hostname 2>/dev/null)
+  local id=${THINKLIGHT_HOST_ID:-}
+  [[ -n "$id" ]] || id=$(hostname -s 2>/dev/null) || id=$(hostname 2>/dev/null)
   id=${id//[^A-Za-z0-9_-]/-}
-  printf '%s\n' "${id:0:64}"
+  id=${id:0:64}
+  printf '%s\n' "${id:-remote}"
 }
 
 tunnel_close() {
