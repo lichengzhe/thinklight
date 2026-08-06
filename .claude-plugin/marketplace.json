@@ -8,7 +8,7 @@
     {
       "name": "thinklight",
       "source": "./plugin",
-      "description": "macOS only. Turn the Mac camera LED into an AI busy light: on = the agent is working, off = done, your turn. Opens the camera to light the LED and discards every frame; hooks write a local session token and read no prompt content. Installs its own helper programs into ~/.local/bin from GitHub Releases on the first session, and says so; switchable off. Optional sound, off until you ask for it with /thinklight:unmute; a shared pair of tracks installs as one package with `thinklight theme install`"
+      "description": "Turn the Mac camera LED into an AI busy light: on = the agent is working, off = done, your turn. Opens the camera to light the LED and discards every frame; hooks write a local session token and read no prompt content. Installs its own helper programs into ~/.local/bin from GitHub Releases on the first session, and says so; switchable off. Installed on a server you ssh into it adds only the CLI, and that agent's turns light the Mac you connected from. Optional sound, off until you ask for it with /thinklight:unmute; a shared pair of tracks installs as one package with `thinklight theme install`"
     }
   ]
 }

@@ -34,6 +34,9 @@ had_cli=0
 notify() {
   # Integration tests exercise the bookkeeping without popping banners.
   [[ "${THINKLIGHT_TEST_NO_NOTIFY:-}" == "1" ]] && return 0
+  # A banner is a macOS affordance. The machine running the agent may be a Linux
+  # box in a rack, where there is nobody to show one to.
+  [[ "$(uname -s)" == Darwin ]] || return 0
   /usr/bin/osascript -e "display notification \"$2\" with title \"$1\"" \
     >/dev/null 2>&1
 }
@@ -52,12 +55,18 @@ gave_up() {
   exit 0
 }
 
-# macOS-only, and no version of this is going to change that: the light is a Mac
-# camera LED. Nothing to withdraw and nothing to say — the attempt stands so this
-# does not run again on every session start.
-[[ "$(uname -s)" == Darwin ]] || exit 0
-major=$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)
-[[ "$major" =~ ^[0-9]+$ ]] && (( major >= 14 )) || exit 0
+# The light is a Mac camera LED, but this is not only run on the Mac that has it:
+# an agent on a build box reaches that light over the ssh session you opened, and
+# it needs the same CLI to do it. get.sh knows what each machine can hold — the
+# programs on a Mac, the CLI alone anywhere else — so the platform question
+# belongs there rather than here.
+if [[ "$(uname -s)" == Darwin ]]; then
+  major=$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)
+  # An older macOS can hold no daemon this plugin would install, and there is
+  # nothing to withdraw or say. The attempt stands so this does not run again at
+  # every session start.
+  [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 14 )) || exit 0
+fi
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/thinklight-bootstrap.XXXXXX") || exit 0
 trap 'rm -rf "$tmp"' EXIT

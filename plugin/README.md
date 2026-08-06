@@ -1,7 +1,8 @@
 # ThinkLight (Claude Code plugin)
 
 Turns the green LED beside your Mac's camera into a busy light for Claude Code:
-lit while the agent works, dark when the turn is yours. macOS 14+ only.
+lit while the agent works, dark when the turn is yours. The light needs macOS
+14+; the agent it reports on does not have to be running there.
 
 Full documentation: <https://github.com/lichengzhe/thinklight>
 
@@ -20,7 +21,10 @@ ungated — a busy light that only worked in some projects would not be a busy
 light. What each one does is write or delete one file under
 `~/.local/state/thinklight/sessions/`, containing the session id, the owning
 pid, and (for Codex) the turn id and transcript path. **No prompt or response
-content is read**, and no hook makes a network call.
+content is read**, and no hook makes a network call. Inside an ssh session that
+carries the light, the file is written on the Mac at the other end instead, and
+what travels there is the session id, the turn id, and this machine's name — over
+a loopback port ssh is already forwarding, never a network address.
 
 **A fifth hook that installs the programs.** `SessionStart` runs
 `scripts/version-check.sh`, which compares this plugin's version against the
@@ -37,6 +41,14 @@ never touches an install that came from a source checkout — there
 Turn it off with `thinklight config bootstrap off`, or `THINKLIGHT_NO_BOOTSTRAP=1`
 before anything is installed; then install the programs yourself with the line
 below.
+
+**On a machine that is not a Mac** — a server you ssh into and run the agent on —
+the same install does something smaller: no binaries, no daemon, no camera and no
+sound, only the `thinklight` shell script. Its hooks send that agent's turns back
+to the Mac you connected from, over the ssh connection you already have open,
+once that Mac has run `thinklight tunnel setup`. Without a tunnel they do nothing
+at all and cost the session nothing. See "Agents on another machine" in the full
+documentation.
 
 ## Commands, yours only
 

@@ -19,8 +19,13 @@ cli="$bin_dir/thinklight"
 state="${THINKLIGHT_STATE_DIR:-$HOME/.local/state/thinklight}"
 share="${THINKLIGHT_SHARE_DIR:-$HOME/.local/share/thinklight}"
 
-version=$(/usr/bin/plutil -extract version raw -o - \
-  "$root/.claude-plugin/plugin.json" 2>/dev/null) || exit 0
+# Read with sed rather than plutil: this hook also runs on the machine holding
+# the agent, which is often not a Mac and has no plutil. The manifest's version is
+# a flat string field, so the quoted-key capture the CLI uses on hook payloads
+# reads it exactly as well.
+version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+  "$root/.claude-plugin/plugin.json" 2>/dev/null | head -n1)
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 0
 
 # The programs live outside either host's plugin cache, so Claude and Codex can
 # briefly see different plugin versions while their marketplaces update. An

@@ -1,5 +1,5 @@
 #!/bin/bash
-# thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|theme install <pkg>|current|reset|version|update [--check]
+# thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|theme install <pkg>|current|reset|tunnel setup|status|version|update [--check]
 # One light, two states: on = an agent is running, off = nothing running.
 # The daemon owns the LED; this CLI only records per-session tokens and makes
 # sure the daemon is available.
@@ -47,6 +47,19 @@ UPDATE_CHECK_OFF="$SHARE/update-check-off"
 # is the same switch for a machine that has never run thinklight at all.
 BOOTSTRAP_OFF="$SHARE/bootstrap-off"
 
+# An agent on another machine reaches the light over the ssh connection you are
+# already using. `thinklight tunnel setup` adds a RemoteForward that publishes the
+# daemon's socket as a loopback port on the far side; `on` there finds that port
+# open and sends the session to the Mac in front of you instead of lighting one
+# nobody is looking at. This script is the only thing the far side needs, and on
+# a machine with no tunnel every path below stays exactly as it was.
+TUNNEL_PORT="${THINKLIGHT_PORT:-47823}"
+SOCKET="$STATE/ipc.sock"
+PROTO=thinklight1
+SSH_CONFIG="${THINKLIGHT_SSH_CONFIG:-$HOME/.ssh/config}"
+SSH_BLOCK_START="# >>> thinklight >>>"
+SSH_BLOCK_END="# <<< thinklight <<<"
+
 # Hooks pipe a JSON payload on stdin: session_id names the token so a
 # session's on/off pair up even across apps with different environments.
 PAYLOAD=""
@@ -55,6 +68,14 @@ OWNER_PID=""
 SESSION_KEY=""
 TRANSCRIPT_PATH=""
 TURN_ID=""
+
+# Banners are a macOS affordance, and this CLI also runs on the machine holding
+# the agent, which may be neither a Mac nor anywhere near a screen. Nothing to
+# say there is better than an error nobody sees.
+notify() {
+  [[ "$(uname -s)" == Darwin ]] || return 0
+  /usr/bin/osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1
+}
 
 json_field() {
   printf '%s' "$PAYLOAD" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
@@ -131,6 +152,194 @@ remove_context_tokens() {
     [[ "$(sed -n '4p' "$token" 2>/dev/null)" == "$SESSION_KEY" ]] || continue
     rm -f "$token" || return 1
   done
+}
+
+# The far side is named so two servers cannot land on one token, and named from
+# characters the daemon will accept in a filename: it turns this into one.
+tunnel_host_id() {
+  local id
+  id=$(hostname -s 2>/dev/null) || id=$(hostname 2>/dev/null)
+  id=${id//[^A-Za-z0-9_-]/-}
+  printf '%s\n' "${id:0:64}"
+}
+
+tunnel_close() {
+  { exec 3>&-; } 2>/dev/null
+}
+
+# Anything at all could be listening on that port — it is an ordinary loopback
+# port on a machine other people may share. Only the daemon's own greeting says
+# otherwise, and waiting for it costs one round trip over an ssh connection that
+# is already open, which is cheaper than a hook that mistakes some unrelated
+# service for the light.
+tunnel_connect() {
+  local hello
+  { exec 3<>"/dev/tcp/127.0.0.1/$TUNNEL_PORT"; } 2>/dev/null || return 1
+  if ! IFS= read -r -t 2 hello <&3 || [[ "$hello" != "$PROTO" ]]; then
+    tunnel_close
+    return 1
+  fi
+}
+
+tunnel_send() {
+  printf '%s\t%s\t%s\t%s\t%s\n' "$PROTO" "$1" "$(tunnel_host_id)" "${2:--}" "${3:--}" >&3
+}
+
+# Holds the connection open for the length of the turn. The daemon treats it as
+# the session's liveness handle — a dropped ssh, a killed agent or a closed lid
+# ends the connection, and the light goes out without anyone having to guess at a
+# timeout. It closes this end when `off` arrives, which is how the read below
+# returns. The wakeup covers the one case the socket cannot see by itself: the
+# agent on this machine exiting without ever running `off`.
+tunnel_hold() {
+  local line rc
+  while kill -0 "$OWNER_PID" 2>/dev/null; do
+    IFS= read -r -t 5 line <&3 && continue
+    rc=$?
+    (( rc > 128 )) || break
+  done
+  tunnel_close
+}
+
+tunnel_on() {
+  tunnel_connect || return 1
+  tunnel_send on "$KEY" "$SESSION_KEY" || { tunnel_close; return 1; }
+  # Detached from the hook's stdout as well as backgrounded: a child still
+  # holding that pipe open would keep the agent waiting on a hook that already
+  # returned. The parent's copy of the connection goes with the parent; the
+  # holder keeps its own.
+  tunnel_hold </dev/null >/dev/null 2>&1 &
+  disown 2>/dev/null
+  tunnel_close
+}
+
+tunnel_off() {
+  tunnel_connect || return 1
+  tunnel_send off "$KEY" "$SESSION_KEY"
+  tunnel_close
+}
+
+# `off` typed at a terminal means "light off, now", and on a machine reaching the
+# light through a tunnel that has to mean the far end too.
+tunnel_clear() {
+  tunnel_connect || return 1
+  tunnel_send clear
+  tunnel_close
+}
+
+# Run by ssh out of the Match block below, once per connection it applies to, so
+# it is a stat and a pgrep in the steady state. A non-zero exit is honest rather
+# than convenient: it drops the RemoteForward for that connection instead of
+# publishing a port that forwards to nothing.
+tunnel_ensure() {
+  local tries=0 budget=25
+  [[ "$(uname -s)" == Darwin ]] || return 1
+  [[ -S "$SOCKET" ]] && daemon_running && return 0
+  if ! daemon_running; then
+    ensure_daemon >/dev/null 2>&1 || return 1
+    # A daemon this call just started has a camera to discover and a permission
+    # to be granted before it reaches the socket, and the first ssh after a
+    # reboot is exactly when that happens. Waiting seconds is worth it once;
+    # waiting them on a daemon that is already up and simply has no socket — one
+    # too old to listen — would be a tax on every ssh for the rest of time.
+    budget=200
+  fi
+  while [[ ! -S "$SOCKET" ]]; do
+    tries=$((tries + 1))
+    (( tries < budget )) || return 1
+    sleep 0.02
+  done
+}
+
+ssh_block() {
+  local pattern=$1
+  # originalhost, not host: `host` is matched against the HostName an earlier
+  # Host block resolved, which for `ssh mini` is by then an address. The name
+  # you typed is the one you meant, and it is what originalhost holds.
+  #
+  # The path is single-quoted inside ssh's own quoting because a home directory
+  # may contain spaces, and ssh hands this string to a shell verbatim.
+  printf '%s\n' "$SSH_BLOCK_START" \
+    "# Sends an agent's on/off back to this Mac's light. Written by: thinklight tunnel setup" \
+    "Match originalhost $pattern exec \"'$BIN_DIR/thinklight' tunnel ensure\"" \
+    "  RemoteForward 127.0.0.1:$TUNNEL_PORT $SOCKET" \
+    "$SSH_BLOCK_END"
+}
+
+tunnel_setup() {
+  local pattern tmp
+  # Joined with commas because that is how one Match host line names several.
+  pattern=$(IFS=,; printf '%s' "$*")
+  pattern=${pattern:-*}
+  [[ "$(uname -s)" == Darwin ]] || {
+    echo "thinklight: run tunnel setup on the Mac with the light, not on the machine running the agent" >&2
+    return 1
+  }
+  mkdir -p -m 700 "${SSH_CONFIG%/*}" || {
+    echo "thinklight: cannot create ${SSH_CONFIG%/*}" >&2
+    return 1
+  }
+  tmp=$(mktemp "${SSH_CONFIG%/*}/.thinklight.XXXXXX") || return 1
+  # Replacing rather than appending: running setup again with a different host
+  # list has to leave one block behind, not two that both forward the same port.
+  if [[ -f "$SSH_CONFIG" ]]; then
+    awk -v s="$SSH_BLOCK_START" -v e="$SSH_BLOCK_END" '
+      $0 == s { skip = 1 }
+      skip == 0 { print }
+      $0 == e { skip = 0 }
+    ' "$SSH_CONFIG" > "$tmp" || { rm -f "$tmp"; return 1; }
+  fi
+  ssh_block "$pattern" >> "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" && mv -f "$tmp" "$SSH_CONFIG" || {
+    rm -f "$tmp"
+    echo "thinklight: could not write $SSH_CONFIG" >&2
+    return 1
+  }
+  echo "added to $SSH_CONFIG:"
+  ssh_block "$pattern" | sed 's/^/  /'
+  echo
+  echo "New ssh sessions to $pattern carry the light. On that machine, install the"
+  echo "ThinkLight plugin — nothing else, and nothing that needs a Mac."
+  # ssh drops the whole block when that command cannot be run, and it does it
+  # quietly — a Match that does not match is ordinary. Better to say it here.
+  [[ -x "$BIN_DIR/thinklight" ]] || {
+    echo "thinklight: nothing is installed at $BIN_DIR/thinklight, so ssh will skip that block" >&2
+    echo "thinklight: install the CLI there, or edit the path the block names" >&2
+  }
+  tunnel_ensure || echo "thinklight: the daemon here is not listening yet; run thinklight blink 1 and try again" >&2
+}
+
+ssh_block_installed() {
+  [[ -f "$SSH_CONFIG" ]] && grep -qxF "$SSH_BLOCK_START" "$SSH_CONFIG"
+}
+
+tunnel_status() {
+  # Reachability first: on the machine running the agent that is the whole
+  # answer, and on a Mac being ssh'd into it is the answer that decides where
+  # this session's light goes.
+  if tunnel_connect; then
+    tunnel_close
+    echo "tunnel: reachable on port $TUNNEL_PORT — sessions here light the Mac at the other end"
+  elif [[ "$(uname -s)" == Darwin ]]; then
+    echo "tunnel: none on port $TUNNEL_PORT — sessions here light this machine"
+  else
+    # No tunnel and no camera: saying "this machine" would name a light that does
+    # not exist. What is missing is the setup on the Mac you ssh in from.
+    echo "tunnel: none on port $TUNNEL_PORT — an agent here has nowhere to report"
+    echo "run thinklight tunnel setup on the Mac you ssh in from, then reconnect"
+    return 0
+  fi
+  [[ "$(uname -s)" == Darwin ]] || return 0
+  if [[ -S "$SOCKET" ]]; then
+    echo "socket: $SOCKET"
+  else
+    echo "socket: not listening (the daemon creates it; try thinklight blink 1)"
+  fi
+  if ssh_block_installed; then
+    echo "ssh config: configured in $SSH_CONFIG"
+  else
+    echo "ssh config: not configured; run thinklight tunnel setup"
+  fi
 }
 
 daemon_running() {
@@ -727,6 +936,17 @@ theme_reset() {
 case "${1:-status}" in
   on)
     load_session_context || exit 1
+    # Inside an ssh session that carries a tunnel, the light belongs to the
+    # machine at the other end of it — the one with a person in front of it.
+    # Nothing is recorded here, and no daemon is wanted here either.
+    if tunnel_on; then
+      schedule_update_check || true
+      exit 0
+    fi
+    # No tunnel, and no camera here to fall back on: an agent on this machine has
+    # nowhere to report. That is a machine nobody has set up rather than a
+    # failure, and saying so costs a hook error on every single turn.
+    [[ "$(uname -s)" == Darwin ]] || exit 0
     if ! write_token; then
       echo "thinklight: could not record the session" >&2
       exit 1
@@ -740,10 +960,14 @@ case "${1:-status}" in
   off)
     if [[ "${2:-}" == "--force" || -t 0 ]]; then
       # A human typing `off` at a terminal means "light off, now"
+      tunnel_clear || true
       clear_sessions || exit 1
       stop_daemons || exit 1
     else
       load_session_context || exit 1
+      # Both ends, every time. A turn can begin with a tunnel and end without
+      # one, or the reverse, and clearing the side that holds nothing is free.
+      tunnel_off || true
       remove_context_tokens || exit 1
     fi
     ;;
@@ -756,6 +980,10 @@ case "${1:-status}" in
     "$0" off </dev/null
     ;;
   check)
+    [[ -x "$BIN_DIR/thinklight-check" ]] || {
+      echo "thinklight: reading the camera is a Mac program's job, and this machine has none installed" >&2
+      exit 1
+    }
     exec "$BIN_DIR/thinklight-check"
     ;;
   version)
@@ -791,6 +1019,23 @@ case "${1:-status}" in
         ;;
     esac
     ;;
+  tunnel)
+    case "${2:-status}" in
+      setup)
+        tunnel_setup "${@:3}" || exit $?
+        ;;
+      status)
+        tunnel_status
+        ;;
+      ensure)
+        tunnel_ensure || exit 1
+        ;;
+      *)
+        echo "thinklight: usage: thinklight tunnel setup [host ...]|status" >&2
+        exit 64
+        ;;
+    esac
+    ;;
   update)
     if [[ "${2:-}" == "--check" ]]; then check_update; else perform_update; fi
     ;;
@@ -809,7 +1054,7 @@ case "${1:-status}" in
     # is safe here where _version_notify cannot risk it: this runs detached from
     # any hook, so its stdout goes nowhere near Claude's context.
     [[ "${THINKLIGHT_TEST_NO_NOTIFY:-}" == "1" ]] && { printf '%s\n' "$detail"; exit 0; }
-    /usr/bin/osascript -e "display notification \"$detail\" with title \"ThinkLight update available\"" >/dev/null 2>&1
+    notify "ThinkLight update available" "$detail"
     ;;
   _version_notify)
     # The Claude Code plugin updates itself; the binaries in ~/.local/bin do
@@ -844,7 +1089,8 @@ case "${1:-status}" in
     fi
     # Integration tests exercise the drift bookkeeping without popping banners.
     [[ "${THINKLIGHT_TEST_NO_NOTIFY:-}" == "1" ]] && exit 0
-    /usr/bin/osascript -e "display notification \"Programs are at $installed, plugin at $plugin_version. $how\" with title \"ThinkLight is out of date\"" >/dev/null 2>&1
+    notify "ThinkLight is out of date" \
+      "Programs are at $installed, plugin at $plugin_version. $how"
     ;;
   _sync)
     # Internal upgrade hook: replace any older daemon, then let session tokens decide.
@@ -853,7 +1099,7 @@ case "${1:-status}" in
     if has_sessions; then ensure_daemon; fi
     ;;
   *)
-    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|theme install <pkg>|current|reset|version|update [--check]" >&2
+    echo "usage: thinklight on|off [--force]|status|blink [seconds]|check|config [key value]|mute|unmute|theme install <pkg>|current|reset|tunnel setup|status|version|update [--check]" >&2
     exit 64
     ;;
 esac

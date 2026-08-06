@@ -9,10 +9,18 @@ SHARE_DIR="$TEST_ROOT/share"
 DAEMON="$BIN_DIR/thinklight-daemon"
 CLI="$ROOT/src/thinklight"
 
+RELAY_PID=""
+
+# Every test runs against a port nothing in this suite ever opens, so a real
+# tunnel on the machine running the tests cannot take delivery of a test's
+# session. The tunnel tests below name the relay's own port explicitly.
+export THINKLIGHT_PORT=47824
+
 cleanup() {
   env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$STATE_DIR" \
     "$CLI" off --force </dev/null >/dev/null 2>&1 || true
   pkill -fx "$DAEMON" 2>/dev/null || true
+  [[ -n "$RELAY_PID" ]] && kill "$RELAY_PID" 2>/dev/null
   find "$TEST_ROOT" -depth -delete 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -836,3 +844,208 @@ run_theme_cli theme install "$CORRUPT_META_PKG" > /dev/null \
 assert_eq "$(run_theme_cli theme current | grep '^name:')" "name: unknown"
 assert_eq "$(run_theme_cli config | grep '^theme:')" "theme: unknown"
 pass "a theme.json that fails to parse does not block installation, only the metadata"
+
+# --- Sessions from another machine ---------------------------------------------
+# The light is a Mac camera LED and the agent is often not on that Mac. What ssh
+# does with the RemoteForward `thinklight tunnel setup` writes is publish the
+# daemon's socket as a loopback port on the far side; tests/tunnel-relay.py is
+# that same splice, so all of this runs without an ssh server, a second machine,
+# or credentials.
+TUNNEL_STATE="$TEST_ROOT/tunnel-state"
+TUNNEL_DAEMON_LOG="$TEST_ROOT/tunnel-daemon.log"
+mkdir -p "$TUNNEL_STATE/sessions"
+env THINKLIGHT_STATE_DIR="$TUNNEL_STATE" THINKLIGHT_TEST_NO_CAMERA=1 \
+  THINKLIGHT_SHARE_DIR="$TEST_ROOT/muted" "$DAEMON" > /dev/null 2>"$TUNNEL_DAEMON_LOG" &
+tunnel_daemon_pid=$!
+for _ in {1..80}; do
+  [[ -S "$TUNNEL_STATE/ipc.sock" ]] && break
+  sleep 0.05
+done
+[[ -S "$TUNNEL_STATE/ipc.sock" ]] \
+  || fail "the daemon never opened its socket: $(cat "$TUNNEL_DAEMON_LOG")"
+
+wait_for_port() {
+  local file=$1 port="" _
+  for _ in {1..80}; do
+    port=$(sed -n 's/^ready //p' "$file")
+    [[ -n "$port" ]] && break
+    sleep 0.05
+  done
+  [[ -n "$port" ]] || return 1
+  printf '%s\n' "$port"
+}
+
+RELAY_OUT="$TEST_ROOT/relay.out"
+: > "$RELAY_OUT"
+/usr/bin/python3 "$ROOT/tests/tunnel-relay.py" 0 "$TUNNEL_STATE/ipc.sock" \
+  > "$RELAY_OUT" 2>&1 &
+RELAY_PID=$!
+relay_port=$(wait_for_port "$RELAY_OUT") \
+  || fail "the tunnel stand-in never came up: $(cat "$RELAY_OUT")"
+
+# The far side is another machine: its own state directory, and a daemon that
+# must never be asked for. It has one anyway, so that a tunnel which worked can
+# be told apart from a fallback to lighting the far machine itself.
+FAR_STATE="$TEST_ROOT/far-state"
+FAR_SHARE="$TEST_ROOT/far-share"
+FAR_BIN="$TEST_ROOT/far-bin"
+FAR_DAEMON="$FAR_BIN/thinklight-daemon"
+mkdir -p "$FAR_BIN" "$FAR_STATE/sessions"
+swiftc "$ROOT/tests/fake-daemon.swift" -o "$FAR_DAEMON"
+
+run_far() {
+  local port=$1
+  shift
+  env THINKLIGHT_BIN_DIR="$FAR_BIN" THINKLIGHT_STATE_DIR="$FAR_STATE" \
+    THINKLIGHT_SHARE_DIR="$FAR_SHARE" THINKLIGHT_PORT="$port" "$CLI" "$@"
+}
+
+far_hook() {
+  local port=$1 event=$2 session=$3
+  shift 3
+  printf '{"hook_event_name":"%s","session_id":"%s"}\n' "$event" "$session" \
+    | run_far "$port" "$@"
+}
+
+far_host=$(hostname -s 2>/dev/null || hostname)
+far_host=${far_host//[^A-Za-z0-9_-]/-}
+far_host=${far_host:0:64}
+
+await_token() {
+  local path=$1 _
+  for _ in {1..80}; do
+    [[ -f "$path" ]] && return 0
+    sleep 0.05
+  done
+  return 1
+}
+
+await_no_token() {
+  local path=$1 _
+  for _ in {1..80}; do
+    [[ -e "$path" ]] || return 0
+    sleep 0.05
+  done
+  return 1
+}
+
+ALPHA="$TUNNEL_STATE/sessions/@$far_host.alpha"
+far_hook "$relay_port" UserPromptSubmit alpha on
+await_token "$ALPHA" || fail "a session on the far side never reached the light"
+assert_eq "$(sed -n '1p' "$ALPHA")" "remote"
+assert_eq "$(sed -n '4p' "$ALPHA")" "alpha"
+[[ -z "$(ls -A "$FAR_STATE/sessions")" ]] || fail "the far side recorded a session of its own"
+! pgrep -fx "$FAR_DAEMON" > /dev/null || fail "the far side started a daemon it does not need"
+far_hook "$relay_port" Stop alpha off
+await_no_token "$ALPHA" || fail "the far side's Stop never put the light out"
+pass "a session on another machine lights this one and puts it out again"
+
+# No pid from over there means anything here, so the connection is the liveness:
+# an agent that dies without ever running `off` still takes its session with it.
+BETA="$TUNNEL_STATE/sessions/@$far_host.beta"
+far_hook "$relay_port" UserPromptSubmit beta on
+await_token "$BETA" || fail "the second session never reached the light"
+holder_pid=$(pgrep -f "$CLI on" | head -1 || true)
+[[ -n "$holder_pid" ]] || fail "nothing on the far side is holding the session open"
+kill "$holder_pid" 2>/dev/null || true
+await_no_token "$BETA" || fail "a killed agent left the light on"
+pass "an agent that dies without running off drops its session with the connection"
+
+# `off --force` typed at a terminal over there means "light off, now" here, and
+# not one session further: this Mac's own sessions are none of its business.
+printf '%s\n%s\n%s\n%s\n' "$$" "" "" "homegrown" > "$TUNNEL_STATE/sessions/homegrown"
+far_hook "$relay_port" UserPromptSubmit gamma on
+far_hook "$relay_port" UserPromptSubmit delta on
+await_token "$TUNNEL_STATE/sessions/@$far_host.gamma" || fail "gamma never arrived"
+await_token "$TUNNEL_STATE/sessions/@$far_host.delta" || fail "delta never arrived"
+run_far "$relay_port" off --force </dev/null > /dev/null 2>&1 || true
+await_no_token "$TUNNEL_STATE/sessions/@$far_host.gamma" || fail "gamma survived off --force"
+await_no_token "$TUNNEL_STATE/sessions/@$far_host.delta" || fail "delta survived off --force"
+[[ -f "$TUNNEL_STATE/sessions/homegrown" ]] \
+  || fail "off --force on the far side cleared this machine's own session"
+rm -f "$TUNNEL_STATE/sessions/homegrown"
+pass "off --force on the far side clears what that machine registered, and no more"
+
+# Captured rather than piped into grep: `grep -q` stops reading at its first
+# match, and the SIGPIPE that follows would fail the pipeline that just matched.
+tunnel_report=$(run_far "$relay_port" tunnel status)
+[[ "$tunnel_report" == *"tunnel: reachable"* ]] \
+  || fail "the far side cannot see the tunnel it is using: $tunnel_report"
+tunnel_report=$(run_far 47824 tunnel status)
+[[ "$tunnel_report" == *"tunnel: none"* ]] \
+  || fail "a port with nothing on it was reported as a tunnel: $tunnel_report"
+pass "tunnel status answers where this machine's sessions light up"
+
+SSH_CONFIG_FILE="$TEST_ROOT/ssh/config"
+mkdir -p "$TEST_ROOT/ssh"
+# The block names the installed CLI by path, and ssh silently skips a block whose
+# exec cannot be run — so the suite has to have one installed to be testing this
+# at all rather than testing an empty bin directory.
+install -m 755 "$CLI" "$BIN_DIR/thinklight"
+printf 'Host build\n  User me\n' > "$SSH_CONFIG_FILE"
+env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$TUNNEL_STATE" \
+  THINKLIGHT_SSH_CONFIG="$SSH_CONFIG_FILE" "$CLI" tunnel setup build > /dev/null 2>&1
+env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$TUNNEL_STATE" \
+  THINKLIGHT_SSH_CONFIG="$SSH_CONFIG_FILE" "$CLI" tunnel setup build gpu > /dev/null 2>&1
+assert_eq "$(grep -c '^# >>> thinklight >>>' "$SSH_CONFIG_FILE")" "1"
+assert_eq "$(grep -c '^Host build$' "$SSH_CONFIG_FILE")" "1"
+grep -q "^Match originalhost build,gpu exec " "$SSH_CONFIG_FILE" \
+  || fail "setup did not rewrite its block for the new host list"
+grep -q "RemoteForward 127.0.0.1:.* $TUNNEL_STATE/ipc.sock" "$SSH_CONFIG_FILE" \
+  || fail "setup did not forward the daemon's socket"
+# ssh reads the block for itself, which also runs the `tunnel ensure` guarding it
+# — the environment is what points that at this test's daemon rather than the
+# one installed on the machine running the suite.
+ssh_config_for() {
+  env THINKLIGHT_BIN_DIR="$BIN_DIR" THINKLIGHT_STATE_DIR="$TUNNEL_STATE" \
+    ssh -F "$SSH_CONFIG_FILE" -G "$1" 2>/dev/null
+}
+[[ "$(ssh_config_for build)" == *"remoteforward "* ]] \
+  || fail "ssh did not accept the block setup wrote, or its guard refused a listening daemon"
+[[ "$(ssh_config_for unrelated)" != *"remoteforward "* ]] \
+  || fail "a host outside the list carries the forward anyway"
+pass "tunnel setup writes one block ssh accepts, scoped to the hosts it names"
+
+# A forwarded port is an ordinary loopback port on a machine other people may
+# share. Something listening there is not the same as the light being there.
+DECOY_OUT="$TEST_ROOT/decoy.out"
+/usr/bin/python3 -c '
+import socket
+listener = socket.socket()
+listener.bind(("127.0.0.1", 0))
+listener.listen(4)
+print("ready %d" % listener.getsockname()[1], flush=True)
+while True:
+    connection, _ = listener.accept()
+    connection.close()
+' > "$DECOY_OUT" 2>&1 &
+decoy_pid=$!
+decoy_port=$(wait_for_port "$DECOY_OUT") || fail "the decoy listener never came up"
+far_hook "$decoy_port" UserPromptSubmit zeta on
+await_token "$FAR_STATE/sessions/zeta" \
+  || fail "a port that is not ThinkLight left the session nowhere"
+[[ ! -e "$TUNNEL_STATE/sessions/@$far_host.zeta" ]] \
+  || fail "a session went to the light through a port that never greeted it"
+far_hook "$decoy_port" Stop zeta off
+run_far "$decoy_port" off --force </dev/null > /dev/null 2>&1 || true
+kill "$decoy_pid" 2>/dev/null || true
+pass "a listener that does not greet is not mistaken for the light"
+
+# The ssh session going away is the same event as the agent going away: the
+# connection ends either way, and nothing is left holding the light on.
+EPSILON="$TUNNEL_STATE/sessions/@$far_host.epsilon"
+far_hook "$relay_port" UserPromptSubmit epsilon on
+await_token "$EPSILON" || fail "the last session never reached the light"
+kill "$RELAY_PID" 2>/dev/null || true
+RELAY_PID=""
+await_no_token "$EPSILON" || fail "an ssh connection that dropped left the light on"
+pass "an ssh connection that drops mid-turn puts the light out by itself"
+
+kill "$tunnel_daemon_pid" 2>/dev/null || true
+wait "$tunnel_daemon_pid" 2>/dev/null || true
+for _ in {1..40}; do
+  [[ -e "$TUNNEL_STATE/ipc.sock" ]] || break
+  sleep 0.05
+done
+[[ ! -e "$TUNNEL_STATE/ipc.sock" ]] || fail "the daemon left its socket behind"
+pass "a daemon that exits takes its socket with it"

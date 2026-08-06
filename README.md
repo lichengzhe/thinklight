@@ -37,14 +37,17 @@ It is particularly useful if you:
 
 - regularly hand long-running tasks to Claude Code or Codex;
 - keep several agent sessions open at once;
+- run agents over ssh, on a build box or another Mac;
 - want to stay focused without missing the handoff.
 
 With multiple sessions, the light stays on while any of them is still working,
-and goes out once they have all finished.
+and goes out once they have all finished. Sessions
+[on a machine you ssh into](#agents-on-another-machine) count among them.
 
 ## Install
 
-You need a Mac with a built-in camera, running macOS 14 or later.
+You need a Mac with a built-in camera, running macOS 14 or later. The machine
+running the agent does not have to be that Mac.
 
 There are two pieces — the **plugin**, which tells the light when your agent
 starts and stops, and the **programs**, which hold the camera so the LED comes on
@@ -91,11 +94,12 @@ codex   # confirm the hook trust prompt in an interactive session
 
 ### Let an agent install it
 
-Paste this into Claude Code, Codex, or another coding agent that is **running
-on this Mac and can use its terminal**:
+Paste this into Claude Code, Codex, or another coding agent that **can use the
+terminal of the machine you want set up** — the Mac with the light, or a server
+you ssh into:
 
 ```text
-Please install and configure ThinkLight on this Mac: https://github.com/lichengzhe/thinklight.
+Please install and configure ThinkLight here: https://github.com/lichengzhe/thinklight.
 First read README.md, get.sh, and plugin/scripts/install-programs.sh to confirm the installation
 scope. Prefer the plugin: run `claude plugin marketplace add lichengzhe/thinklight` and
 `claude plugin install thinklight@thinklight` for Claude Code, and the codex plugin equivalents for
@@ -103,11 +107,18 @@ Codex CLI, falling back to hooks in ~/.claude/settings.json only if the plugin r
 plugin installs the programs itself at session start; if they are not in ~/.local/bin yet, run
 get.sh (or clone the repository and run install.sh to build from source). Verify with
 ~/.local/bin/thinklight blink 3 and ~/.local/bin/thinklight check. Stop and tell me exactly what to
-click when macOS asks for camera access or Codex asks me to trust the hooks. When finished, report
-the install location, hook configuration, and verification results. Do not change unrelated settings.
+click when macOS asks for camera access or Codex asks me to trust the hooks.
+If this machine is not a Mac, or you are working inside an ssh session, the light is on the Mac I
+connect from: the same plugin install is all this machine needs, and what verifies it here is
+~/.local/bin/thinklight tunnel status rather than blink and check. If that reports no tunnel, tell
+me to run `thinklight tunnel setup` on the Mac and reconnect — it edits ~/.ssh/config there, so do
+not attempt it yourself from here. When finished, report the install location, hook configuration,
+and verification results. Do not change unrelated settings.
 ```
 
-You still need to personally approve macOS camera access and Codex hook trust.
+You still need to personally approve macOS camera access and Codex hook trust,
+and `thinklight tunnel setup` stays yours to run: it writes to your
+`~/.ssh/config`, which is not an agent's call to make.
 
 ### Installing the programs yourself
 
@@ -188,6 +199,8 @@ thinklight mute             turn sound off, keeping the tracks in place
 thinklight theme install P  install a sound theme from a zip or a directory (see below)
 thinklight theme current    print the installed theme's name, author, license, and source
 thinklight theme reset      restore the bundled default tracks, replacing any you placed by hand
+thinklight tunnel setup [H] carry this Mac's light into ssh sessions, to every host or only the named ones
+thinklight tunnel status    say which light a session on this machine would turn on
 thinklight update --check   check for a new version
 thinklight update           update ThinkLight
 ```
@@ -262,6 +275,73 @@ a new turn cuts off a completion chime that is still playing — "your turn" goe
 stale the instant the next turn begins. `thinklight blink` runs through the same
 on/off path, so once sound is on that diagnostic plays too.
 
+## Agents on another machine
+
+The light is on your Mac. The agent frequently is not: you ssh into a build box,
+or into another Mac, and run Claude Code there. Its hooks run there too, where
+there is no LED anybody is looking at.
+
+ThinkLight sends those turns back down the ssh connection you already have open.
+On the Mac with the light, once:
+
+```bash
+thinklight tunnel setup              # any host you ssh into
+thinklight tunnel setup build gpu    # or only these
+```
+
+Name the hosts the way you type them — `ssh build` is matched on `build`, not on
+whatever `HostName` it resolves to. That adds a block to `~/.ssh/config`
+publishing the daemon's socket as a loopback port on whatever you connect to. On that machine, install the plugin exactly the
+way you installed it here — it works out that there is no camera to serve and
+installs nothing that needs one, no daemon and no binaries, just the CLI.
+
+There is nothing further to configure, and nothing to declare about which machine
+is which. Every session asks one question and gets it right on its own:
+
+> **Is there a tunnel? Then the light is at the other end of it. Otherwise it is
+> the one on this machine.**
+
+| Where you are sitting | Where the agent runs | Which light comes on |
+| --- | --- | --- |
+| At your Mac | On that same Mac | That Mac's — unchanged, no tunnel involved |
+| At your Mac | On a Linux server, over ssh | Your Mac's |
+| At your Mac | On another Mac, over ssh | **Yours**, not the one nobody is watching |
+
+`thinklight tunnel status`, run on either machine, answers the question out loud.
+
+The light goes out the moment the connection ends — a dropped ssh, a closed lid,
+a killed agent. No pid from over there means anything here, so the connection
+itself is what the daemon holds onto, and losing it is the signal rather than a
+timeout somebody had to guess at.
+
+### What this costs the machine running the agent
+
+Nothing is compiled, nothing is granted, nothing runs in the background, and
+nothing needs root. It has no daemon, no camera, and no sound: the CLI opens a
+loopback port, writes one line, and holds it for the turn.
+
+While your ssh session is up, that port exists on the far side and belongs to
+your own sshd process. Anyone else logged into that machine could connect to it —
+all they could do is turn your light on or off, but on a shared host it is worth
+knowing.
+
+### The edges
+
+- **VS Code Remote, Cursor, JetBrains** all read `~/.ssh/config`, so they carry
+  the light too. **mosh does not**: it has no port forwarding at all.
+- **tmux.** If you detach and let the ssh session close, the light goes out even
+  though the agent is still working — the tunnel went with your session. That is
+  the intended reading (you are not there), but it can surprise.
+- **Several ssh sessions to one host.** The second one finds the port taken,
+  prints one warning, and shares the first one's tunnel. Only when two *different*
+  Macs connect to the same server does this matter: every session's light lands on
+  whichever Mac connected first.
+- **You, at a Mac somebody is also ssh'd into.** A local turn on that Mac follows
+  the same rule and reports up the tunnel. Rare, and "there is a person watching
+  at the other end" is a fair reading of it, but it is the price of the rule.
+- **Two hops.** A → B → C carries no light to A yet; the middle machine would
+  have to relay, and it does not.
+
 ## Privacy, resources, and compatibility
 
 - **Camera frames:** ThinkLight needs camera permission to activate the hardware
@@ -280,6 +360,11 @@ on/off path, so once sound is on that diagnostic plays too.
   on each track is opened and buffered for playback rather than decoded into
   memory whole. While muted — the default — the daemon performs no audio setup
   at all.
+- **Sessions from another machine:** the tunnel carries a session id, a turn id,
+  and the name of the machine — no prompt content, no responses, no file paths.
+  It is not a network service either: ssh binds the far end to `127.0.0.1` for the
+  life of your session, and this Mac's end is a Unix socket in your own state
+  directory, readable and writable by nobody but you.
 - **Video calls:** macOS allows multiple processes to share a camera, and
   ThinkLight has been tested alongside Zoom and Tencent Meeting. While another
   app is using the camera, however, the LED remains on, so it cannot reflect
@@ -313,6 +398,16 @@ session (light off). Codex tokens also carry transcript and turn metadata so
 the daemon can recognize a Ctrl+C-interrupted turn that never ran `Stop`.
 Keeping the idle daemon resident avoids losing a new start signal while an old
 process is exiting.
+
+A session on another machine cannot write into that state directory, so it speaks
+to the daemon over a Unix socket instead, which `thinklight tunnel setup` hands to
+ssh as a `RemoteForward`. The hook on the far side finds the forwarded port,
+checks that what answers is really the daemon, and holds the connection open for
+the rest of the turn. That connection is the session: the daemon's token lives
+exactly as long as it does, which is why a dropped ssh puts the light out with
+nothing to detect and nothing to wait for. The far side needs no daemon of its
+own, and a machine with no tunnel never notices any of this — it takes the same
+path it always did.
 
 Sound hangs off that same state transition, so it needs no second state machine:
 the daemon holds two `AVAudioPlayer`s — the loop (`numberOfLoops = -1`, seamless
